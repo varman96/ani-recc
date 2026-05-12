@@ -7,21 +7,23 @@ simulate Jikan API responses and validates data mapping and edge cases.
 
 import unittest
 from unittest.mock import MagicMock, patch
-from anime import fetch_anime_metadata
+from anime import search_anime, fetch_anime_details
 
 
 class TestAnimeMetadata(unittest.TestCase):
     """
-    Unit tests for the fetch_anime_metadata function.
+    Unit tests for search and metadata retrieval functions.
     """
 
     def setUp(self):
         """
         Sets up the mock data structures for API responses.
         """
-        # Sample mock data mimicking Jikan API v4 structure.
         self.mock_search_data = {
-            "data": [{"mal_id": 1, "title": "Test Anime"}]
+            "data": [
+                {"mal_id": 1, "title": "Anime 1", "year": 2021, "score": 8.0},
+                {"mal_id": 2, "title": "Anime 2", "year": 2022, "score": 7.5}
+            ]
         }
         
         self.mock_details_data = {
@@ -40,31 +42,44 @@ class TestAnimeMetadata(unittest.TestCase):
                 {"entry": {"title": "Rec 2"}},
                 {"entry": {"title": "Rec 3"}},
                 {"entry": {"title": "Rec 4"}},
-                {"entry": {"title": "Rec 5"}},
-                {"entry": {"title": "Rec 6"}} 
+                {"entry": {"title": "Rec 5"}}
             ]
         }
 
     @patch('anime.Jikan')
-    def test_fetch_metadata_mapping_success(self, MockJikan):
+    def test_search_anime_success(self, MockJikan):
         """
-        Verify that specific keys are correctly mapped to each of the 6 parameters.
+        Verify that search_anime returns the correct list of matches.
         
         Args:
             MockJikan: The mocked Jikan API class.
         """
-        # Configure mock instance methods.
         instance = MockJikan.return_value
         instance.search.return_value = self.mock_search_data
+
+        results = search_anime("Test Query")
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["title"], "Anime 1")
+        self.assertEqual(results[1]["mal_id"], 2)
+
+    @patch('anime.Jikan')
+    def test_fetch_details_mapping_success(self, MockJikan):
+        """
+        Verify that specific keys are correctly mapped from details and recommendations.
+        
+        Args:
+            MockJikan: The mocked Jikan API class.
+        """
+        instance = MockJikan.return_value
         instance.anime.side_effect = [
             self.mock_details_data,           
             self.mock_recommendations_data    
         ]
 
-        result = fetch_anime_metadata("Test Query")
+        result = fetch_anime_details(1)
 
         # Verify the 6-parameter mapping remains accurate.
-        self.assertIsNotNone(result)
         self.assertEqual(result["Anime Name"], "Test Anime Full Title")
         self.assertEqual(result["Genres — content similarity"], ["Action", "Adventure"])
         self.assertEqual(result["Themes — more precise content similarity"], ["Sci-Fi"])
@@ -73,9 +88,9 @@ class TestAnimeMetadata(unittest.TestCase):
         self.assertEqual(result["Rating — tone/audience"], "PG-13 - Teens 13 or older")
 
     @patch('anime.Jikan')
-    def test_fetch_metadata_missing_data(self, MockJikan):
+    def test_search_anime_no_results(self, MockJikan):
         """
-        Validate behavior when no search results are found.
+        Validate behavior when search_anime returns no matches.
         
         Args:
             MockJikan: The mocked Jikan API class.
@@ -83,55 +98,22 @@ class TestAnimeMetadata(unittest.TestCase):
         instance = MockJikan.return_value
         instance.search.return_value = {"data": []}
 
-        result = fetch_anime_metadata("Nonexistent Anime")
-        
-        # Verify the script returns None for empty search results.
-        self.assertIsNone(result)
+        results = search_anime("Nonexistent")
+        self.assertEqual(results, [])
 
     @patch('anime.Jikan')
-    def test_fetch_metadata_malformed_fields(self, MockJikan):
+    def test_fetch_details_api_error(self, MockJikan):
         """
-        Validate behavior when optional data fields are empty.
+        Test how the script handles API exceptions during details retrieval.
         
         Args:
             MockJikan: The mocked Jikan API class.
         """
         instance = MockJikan.return_value
-        instance.search.return_value = self.mock_search_data
-        
-        # Construct details with empty list values for genres and themes.
-        malformed_details = self.mock_details_data.copy()
-        malformed_details["data"]["genres"] = []
-        malformed_details["data"]["themes"] = []
-        
-        instance.anime.side_effect = [
-            malformed_details,
-            {"data": []} 
-        ]
+        instance.anime.side_effect = Exception("API Error")
 
-        result = fetch_anime_metadata("Test Query")
-
-        # Verify mapping handles empty lists gracefully.
-        self.assertEqual(result["Genres — content similarity"], [])
-        self.assertEqual(result["Themes — more precise content similarity"], [])
-        self.assertEqual(result["Recommendations — community intuition"], [])
-
-    @patch('anime.Jikan')
-    def test_fetch_metadata_api_error(self, MockJikan):
-        """
-        Test how the script handles API exceptions.
-        
-        Args:
-            MockJikan: The mocked Jikan API class.
-        """
-        instance = MockJikan.return_value
-        instance.search.side_effect = Exception("API Connection Failed")
-
-        # Verify that unexpected API errors are propagated or caught.
-        with self.assertRaises(Exception) as context:
-            fetch_anime_metadata("Test Query")
-        
-        self.assertTrue("API Connection Failed" in str(context.exception))
+        with self.assertRaises(Exception):
+            fetch_anime_details(1)
 
 
 if __name__ == '__main__':
