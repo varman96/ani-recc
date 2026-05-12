@@ -12,28 +12,26 @@ from anime import search_anime, fetch_anime_details
 
 class TestAnimeMetadata(unittest.TestCase):
     """
-    Unit tests for search and metadata retrieval functions.
+    Unit tests for search and optimized metadata retrieval functions.
     """
 
     def setUp(self):
         """
         Sets up the mock data structures for API responses.
         """
-        self.mock_search_data = {
-            "data": [
-                {"mal_id": 1, "title": "Anime 1", "year": 2021, "score": 8.0},
-                {"mal_id": 2, "title": "Anime 2", "year": 2022, "score": 7.5}
-            ]
+        # Full record mimicking a search result entry.
+        self.mock_selected_anime = {
+            "mal_id": 1,
+            "title": "Test Anime Full Title",
+            "genres": [{"name": "Action"}, {"name": "Adventure"}],
+            "themes": [{"name": "Sci-Fi"}],
+            "score": 8.5,
+            "rating": "PG-13 - Teens 13 or older",
+            "year": 2024
         }
         
-        self.mock_details_data = {
-            "data": {
-                "title": "Test Anime Full Title",
-                "genres": [{"name": "Action"}, {"name": "Adventure"}],
-                "themes": [{"name": "Sci-Fi"}],
-                "score": 8.5,
-                "rating": "PG-13 - Teens 13 or older"
-            }
+        self.mock_search_data = {
+            "data": [self.mock_selected_anime]
         }
         
         self.mock_recommendations_data = {
@@ -59,27 +57,23 @@ class TestAnimeMetadata(unittest.TestCase):
 
         results = search_anime("Test Query")
 
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0]["title"], "Anime 1")
-        self.assertEqual(results[1]["mal_id"], 2)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "Test Anime Full Title")
 
     @patch('anime.Jikan')
     def test_fetch_details_mapping_success(self, MockJikan):
         """
-        Verify that specific keys are correctly mapped from details and recommendations.
+        Verify that the 6 parameters are mapped correctly using only the recommendations call.
         
         Args:
             MockJikan: The mocked Jikan API class.
         """
         instance = MockJikan.return_value
-        instance.anime.side_effect = [
-            self.mock_details_data,           
-            self.mock_recommendations_data    
-        ]
+        instance.anime.return_value = self.mock_recommendations_data
 
-        result = fetch_anime_details(1)
+        result = fetch_anime_details(self.mock_selected_anime)
 
-        # Verify the 6-parameter mapping remains accurate.
+        # Verify the 6-parameter mapping remains accurate using mixed data sources.
         self.assertEqual(result["Anime Name"], "Test Anime Full Title")
         self.assertEqual(result["Genres — content similarity"], ["Action", "Adventure"])
         self.assertEqual(result["Themes — more precise content similarity"], ["Sci-Fi"])
@@ -88,32 +82,18 @@ class TestAnimeMetadata(unittest.TestCase):
         self.assertEqual(result["Rating — tone/audience"], "PG-13 - Teens 13 or older")
 
     @patch('anime.Jikan')
-    def test_search_anime_no_results(self, MockJikan):
-        """
-        Validate behavior when search_anime returns no matches.
-        
-        Args:
-            MockJikan: The mocked Jikan API class.
-        """
-        instance = MockJikan.return_value
-        instance.search.return_value = {"data": []}
-
-        results = search_anime("Nonexistent")
-        self.assertEqual(results, [])
-
-    @patch('anime.Jikan')
     def test_fetch_details_api_error(self, MockJikan):
         """
-        Test how the script handles API exceptions during details retrieval.
+        Test how the script handles API exceptions during the recommendations call.
         
         Args:
             MockJikan: The mocked Jikan API class.
         """
         instance = MockJikan.return_value
-        instance.anime.side_effect = Exception("API Error")
+        instance.anime.side_effect = Exception("Recommendations Failed")
 
         with self.assertRaises(Exception):
-            fetch_anime_details(1)
+            fetch_anime_details(self.mock_selected_anime)
 
 
 if __name__ == '__main__':

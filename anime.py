@@ -25,33 +25,38 @@ def search_anime(query):
     return search_results["data"]
 
 
-def fetch_anime_details(mal_id):
+def fetch_anime_details(selected_anime):
     """
-    Retrieves refined metadata for a specific anime ID.
+    Retrieves recommendations and combines them with existing metadata.
     
     Args:
-        mal_id (int): The MyAnimeList ID of the anime.
+        selected_anime (dict): The anime record retrieved from the search results.
         
     Returns:
         dict: A dictionary containing the 6 requested parameters.
     """
     jikan = Jikan()
+    mal_id = selected_anime["mal_id"]
     
-    # Retrieve full anime details and community recommendations.
-    details = jikan.anime(mal_id)["data"]
+    # Only one additional call is needed for community recommendations.
     recs_res = jikan.anime(mal_id, extension="recommendations")
     recommendations = [r["entry"]["title"] for r in recs_res["data"][:5]]
     
-    # Construct the final data structure.
-    return {
-        "Anime Name": details["title"],
-        "Genres — content similarity": [g["name"] for g in details["genres"]],
-        "Themes — more precise content similarity": 
-            [t["name"] for t in details["themes"]],
-        "Recommendations — community intuition": recommendations,
-        "MAL Score — quality signal": details["score"],
-        "Rating — tone/audience": details["rating"]
+    # Reuse the metadata already present in the search result to save an API call.
+    data = {
+        "Anime Name": selected_anime["title"],
+        "Genres": [g["name"] for g in selected_anime.get("genres", [])],
+        "Recommendations": recommendations,
+        "MAL Score": selected_anime.get("score"),
+        "Audience": selected_anime.get("rating")
     }
+    
+    # Only include themes if the list is not empty.
+    themes = [t["name"] for t in selected_anime.get("themes", [])]
+    if themes:
+        data["Themes"] = themes
+        
+    return data
 
 
 def main():
@@ -78,10 +83,7 @@ def main():
     # Display the top 5 matches for user selection.
     print("\n--- Search Results ---")
     for i, anime in enumerate(results, start=1):
-        title = anime["title"]
-        year = anime.get("year") if anime.get("year") else "N/A"
-        score = anime.get("score") if anime.get("score") else "N/A"
-        print(f"[{i}] {title} ({year}) - Score: {score}")
+        print(f"[{i}] {anime['title']}")
 
     # Handle user selection.
     try:
@@ -97,9 +99,10 @@ def main():
         return
 
     selected_anime = results[choice - 1]
-    print(f"Fetching details for '{selected_anime['title']}'...")
+    print(f"Getting info for '{selected_anime['title']}'...")
     
-    metadata = fetch_anime_details(selected_anime["mal_id"])
+    # Process the selected anime data.
+    metadata = fetch_anime_details(selected_anime)
         
     # Print the result as a formatted JSON string.
     print("\n--- Result (JSON) ---")
