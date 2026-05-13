@@ -7,7 +7,7 @@ extract key metadata, and display it as a JSON-based structure.
 
 import json
 import argparse
-from jikanpy import Jikan
+import requests
 import knn
 import re
 
@@ -47,8 +47,11 @@ def search_anime(query):
     Returns:
         list: A list of unique franchise records.
     """
-    jikan = Jikan()
-    search_results = jikan.search("anime", query, parameters={"limit": 25})
+    base_url = "https://api.jikan.moe/v4/anime"
+    params = {"q": query, "limit": 25}
+    response = requests.get(base_url, params=params)
+    response.raise_for_status()
+    search_results = response.json()
     
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
@@ -86,11 +89,12 @@ def fetch_anime_details(selected_anime):
     Returns:
         dict: A dictionary containing the requested parameters.
     """
-    jikan = Jikan()
     mal_id = selected_anime["mal_id"]
+    base_url = f"https://api.jikan.moe/v4/anime/{mal_id}/recommendations"
+    response = requests.get(base_url)
+    response.raise_for_status()
+    recs_res = response.json()
     
-    # Fetch community recommendations to use as a similarity signal
-    recs_res = jikan.anime(mal_id, extension="recommendations")
     # Clean the recommendation titles and take ONLY the top 3
     recommendations = [get_seed_name(r["entry"]["title"]) for r in recs_res["data"][:3]]
     
@@ -113,20 +117,21 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
     """
     Finds and aggregates top-ranked animes by genre, merging sequels and excluding seen history.
     """
-    jikan = Jikan()
+    base_url = "https://api.jikan.moe/v4/anime"
     if not genre_ids:
         return []
 
-    # Use Score (Desc) instead of Rank (Asc) to get the actual best-rated shows first.
-    # Added min_score to filter out unrated/upcoming titles at the API level.
     primary_genre_id = genre_ids[0]
-    search_results = jikan.search("anime", "", parameters={
+    params = {
         "genres": str(primary_genre_id),
         "order_by": "score",
         "sort": "desc",
         "min_score": 1,
         "limit": 25
-    })
+    }
+    response = requests.get(base_url, params=params)
+    response.raise_for_status()
+    search_results = response.json()
 
     source_genre_ids = set(genre_ids)
     source_title_root = get_seed_name(selected_anime["title"]).lower()
@@ -164,7 +169,7 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
         required = 2 if num_source >= 3 else 1
         if matches < required:
             continue
-
+ 
         # 4. Aggregation into "Sub-Folders".
         if clean_lower not in franchises:
             franchises[clean_lower] = {
