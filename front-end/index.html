@@ -816,12 +816,13 @@ input[type="text"]::placeholder {
             }
 
             // Update state (Machine-side Reference Map)
-            const refName = data.reference['Anime Name'];
+            const refId = data.reference['MAL_ID'];
+            const reccId = recc['MAL_ID'];
             const reccName = recc['Anime Name'];
             
             // Log both reference and recommendation to ensure no repeats from either side
-            if (!chainHistory.includes(refName)) chainHistory.push(refName);
-            if (!chainHistory.includes(reccName)) chainHistory.push(reccName);
+            if (refId && !chainHistory.includes(refId)) chainHistory.push(refId);
+            if (reccId && !chainHistory.includes(reccId)) chainHistory.push(reccId);
 
             // Update UI
             document.getElementById('recc-img').src = recc['Image URL'] || '';
