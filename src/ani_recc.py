@@ -180,13 +180,7 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
         title = anime["title"]
         
         # 1. Skip the reference anime, its sequels, and anything already seen in this chain.
-        is_seen = False
-        for seen_title in seen_franchises:
-            if is_same_franchise(title, seen_title):
-                is_seen = True
-                break
-                
-        if is_seen or is_same_franchise(title, source_title):
+        if anime.get("mal_id") in seen_franchises or is_same_franchise(title, source_title):
             continue
             
         # 2. Type, Genre & Rating Filtering.
@@ -335,7 +329,7 @@ def main():
                 continue
 
         # Add to history
-        history.add(selected_anime['title'])
+        history.add(selected_anime['mal_id'])
         
         print(f"\n--- Reference Anime: {selected_anime['title']} ---")
         

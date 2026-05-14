@@ -35,8 +35,8 @@ def get_recommendation():
         
         # 3. Find candidates with similar genres
         # Convert history list to set for O(1) lookups in the candidate search
-        history = {h.lower() for h in history_list}
-        history.add(selected_anime['title'].lower())
+        history = set(history_list)
+        history.add(selected_anime['mal_id'])
         
         genre_ids = selected_anime.get('genre_ids', [])
         candidates = ani_recc.get_top_candidates_by_genre(genre_ids, selected_anime, history)

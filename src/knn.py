@@ -115,7 +115,7 @@ def process_vectors(ref_data, candidate_pool_data, chain_depth=0):
     
     print(f"\n--- Weight Distribution (Total: 10.0) ---")
     for k, v in weights.items():
-        print(f"  {k}: {v} ({int(v*10)}% importance)")
+        print(f"  {k}: {v} ({round(v * 10)}% importance)")
     
 
     # Calculate Normalization Maxima across the entire pool.
