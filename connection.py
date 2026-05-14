@@ -1,10 +1,19 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from src import ani_recc, knn
+import os
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 CORS(app)
+
+@app.route('/')
+def serve_index():
+    return send_from_directory('front-end', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory('front-end', path)
 
 @app.route('/recommend', methods=['POST'])
 def get_recommendation():
