@@ -12,7 +12,7 @@ jikanpy-v4
 or instead use: pip install -r requirements.txt
 
 To start the app:
-Run python -m src.connection and open index.html in your browser.
+Run python -m src.connection and open index.html in your browser or you can visit https://ani-recc-d7pep625o-varman96s-projects.vercel.app/ . Note that to use the public link you have to host your own backend using ngrok or other services. 
 
 
 ## Known Limitations
