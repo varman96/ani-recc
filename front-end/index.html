@@ -676,7 +676,11 @@ input[type="text"]::placeholder {
 
         async function performSearch(query) {
             try {
-                const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`, {
+                    headers: {
+                        "ngrok-skip-browser-warning": "69420"
+                    }
+                });
                 const data = await res.json();
                 
                 if (data.error || !data.length) {
@@ -730,7 +734,10 @@ input[type="text"]::placeholder {
             try {
                 const res = await fetch(`${API_BASE}/recommend`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': '69420'
+                    },
                     body: JSON.stringify({
                         title: title,
                         history: chainHistory,
