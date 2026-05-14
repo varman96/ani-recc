@@ -12,29 +12,21 @@ import knn
 import re
 
 
-def get_seed_name(title):
+def is_same_franchise(title1, title2, threshold=0.5):
     """
-    Strips away sequel markers to find the primary 'Seed Name' of a franchise.
+    Checks if two titles belong to the same franchise using word overlap.
+    Calculates the percentage of shared words relative to the shorter title.
     """
-    # 1. Always prioritize the colon as a franchise/subtitle marker.
-    if ":" in title:
-        title = title.split(":")[0]
+    words1 = set(re.findall(r'\b\w+\b', title1.lower()))
+    words2 = set(re.findall(r'\b\w+\b', title2.lower()))
+    
+    if not words1 or not words2:
+        return False
         
-    # 2. Refined patterns for other sequel markers and meta-info.
-    patterns = [
-        r"\s*\(.*\)$",      # Meta info in parentheses (e.g., "(Shinsaku Anime)", "(TV)")
-        r"\s+(?:\d+(?:st|nd|rd|th)|Season|Part|Movie)\s+(?:Season|Part|Movie|\d+)",
-        r"\s+\d+(?:st|nd|rd|th)\s+Season",
-        r"\s+Season\s+\d+",
-        r"\s+Part\s+\d+",
-        r"\s+Movie\s+\d+",
-        r"\s+[IVXLCDM]+$", 
-        r"\s+\d+$"          
-    ]
-    seed = title
-    for p in patterns:
-        seed = re.split(p, seed, flags=re.IGNORECASE)[0]
-    return seed.strip()
+    overlap = len(words1.intersection(words2))
+    shorter_len = min(len(words1), len(words2))
+    
+    return (overlap / shorter_len) >= threshold
 
 
 def search_anime(query):
@@ -56,7 +48,7 @@ def search_anime(query):
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
     
-    franchises = {} # seed_name_lower -> first_anime_object
+    franchises = {} # seed_name_lower -> aggregated_franchise_record
     
     for anime in search_results["data"]:
         # 1. Type, Genre & Rating Filtering
@@ -67,15 +59,56 @@ def search_anime(query):
         if not anime.get("score") or anime.get("score") == 0:
             continue
             
-        # 2. Grouping by Seed Name
-        seed = get_seed_name(anime["title"])
-        seed_lower = seed.lower()
+        # 2. Aggregation by Word Overlap
+        title = anime["title"]
         
-        if seed_lower not in franchises:
-            # Overwrite the title to the seed name for the display list
-            anime["title"] = seed
-            franchises[seed_lower] = anime
+        found_seed = None
+        for existing_seed in franchises.keys():
+            if is_same_franchise(title, existing_seed):
+                found_seed = existing_seed
+                break
+        
+        if not found_seed:
+            franchises[title] = {
+                "title": title,
+                "type": anime.get("type"),
+                "genres": [g["name"] for g in anime.get("genres", [])],
+                "genre_ids": [g["mal_id"] for g in anime.get("genres", [])],
+                "themes": [t["name"] for t in anime.get("themes", [])],
+                "demographics": [d["name"] for d in anime.get("demographics", [])],
+                "score": anime.get("score") or 0,
+                "rank": anime.get("rank"),
+                "popularity": anime.get("popularity"),
+                "members": anime.get("members"),
+                "images": anime.get("images"),
+                "mal_id": anime.get("mal_id")
+            }
+        else:
+            # 3. Aggregate metadata into the franchise
+            f = franchises[found_seed]
             
+            # Combine Lists
+            for key in ["genres", "themes", "demographics"]:
+                existing = set(f[key])
+                existing.update(x["name"] for x in anime.get(key, []))
+                f[key] = list(existing)
+            
+            # Combine Genre IDs specifically for recommendation logic
+            existing_ids = set(f["genre_ids"])
+            existing_ids.update(g["mal_id"] for g in anime.get("genres", []))
+            f["genre_ids"] = list(existing_ids)
+            
+            f["score"] = max(f["score"], anime.get("score") or 0)
+            f["members"] = (f["members"] or 0) + (anime.get("members") or 0)
+            
+            # 4. Promote TV series as the display representative (Hero)
+            if anime.get("type") == "TV" and f["type"] != "TV":
+                f["images"] = anime.get("images")
+                f["type"] = "TV"
+                f["mal_id"] = anime.get("mal_id")
+                f["rank"] = anime.get("rank")
+                f["popularity"] = anime.get("popularity")
+                
     return list(franchises.values())[:5]
 
 
@@ -96,18 +129,20 @@ def fetch_anime_details(selected_anime):
     recs_res = response.json()
     
     # Clean the recommendation titles and take ONLY the top 3
-    recommendations = [get_seed_name(r["entry"]["title"]) for r in recs_res["data"][:3]]
+    recommendations = [r["entry"]["title"] for r in recs_res["data"][:3]]
     
     # Extract only the requested metadata to save on API calls and keep the JSON clean.
     data = {
         "Anime Name": selected_anime["title"],
-        "Genres": [g["name"] for g in selected_anime.get("genres", [])],
-        "Demographics": [d["name"] for d in selected_anime.get("demographics", [])],
-        "Themes": [t["name"] for t in selected_anime.get("themes", [])],
+        "Genres": selected_anime.get("genres", []),
+        "Demographics": selected_anime.get("demographics", []),
+        "Themes": selected_anime.get("themes", []),
         "Recommendations": recommendations,
         "Rank": selected_anime.get("rank"),
         "Popularity": selected_anime.get("popularity"),
-        "Members": selected_anime.get("members")
+        "Members": selected_anime.get("members"),
+        "Image URL": selected_anime.get("images", {}).get("webp", {}).get("large_image_url"),
+        "MAL_ID": selected_anime.get("mal_id")
     }
     
     return data
@@ -134,20 +169,24 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
     search_results = response.json()
 
     source_genre_ids = set(genre_ids)
-    source_title_root = get_seed_name(selected_anime["title"]).lower()
+    source_title = selected_anime["title"]
     
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
     
-    franchises = {} # clean_name_lower -> { "display_name": str, "versions": [] }
+    franchises = {} # representative_title -> { "Clean Name": str, "Versions": [] }
 
     for anime in search_results["data"]:
         title = anime["title"]
-        clean_name = get_seed_name(title)
-        clean_lower = clean_name.lower()
         
         # 1. Skip the reference anime, its sequels, and anything already seen in this chain.
-        if clean_lower == source_title_root or clean_lower in seen_franchises:
+        is_seen = False
+        for seen_title in seen_franchises:
+            if is_same_franchise(title, seen_title):
+                is_seen = True
+                break
+                
+        if is_seen or is_same_franchise(title, source_title):
             continue
             
         # 2. Type, Genre & Rating Filtering.
@@ -171,14 +210,21 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
             continue
  
         # 4. Aggregation into "Sub-Folders".
-        if clean_lower not in franchises:
-            franchises[clean_lower] = {
-                "Clean Name": clean_name,
+        found_group_key = None
+        for rep_title in franchises.keys():
+            if is_same_franchise(title, rep_title):
+                found_group_key = rep_title
+                break
+                
+        if not found_group_key:
+            found_group_key = title
+            franchises[found_group_key] = {
+                "Clean Name": title,
                 "Versions": []
             }
         
         # Store this specific version's metadata
-        franchises[clean_lower]["Versions"].append({
+        franchises[found_group_key]["Versions"].append({
             "Title": title,
             "Genres": {g["name"] for g in anime_genres},
             "Demographics": {d["name"] for d in anime.get("demographics", [])},
@@ -186,7 +232,9 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
             "Score": anime.get("score") or 0,
             "Rank": anime.get("rank") or 999999,
             "Popularity": anime.get("popularity") or 999999,
-            "Members": anime.get("members") or 0
+            "Members": anime.get("members") or 0,
+            "Image URL": anime.get("images", {}).get("webp", {}).get("large_image_url"),
+            "MAL_ID": anime.get("mal_id")
         })
 
     # Convert Aggregated Franchises into flattened objects for KNN.
@@ -221,7 +269,9 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
             "Rank": best_rank,
             "Popularity": best_pop,
             "Members": total_members,
-            "MAL Score": max(scores) if scores else 0
+            "MAL Score": max(scores) if scores else 0,
+            "Image URL": versions[0]["Image URL"] if versions else None,
+            "MAL_ID": versions[0]["MAL_ID"] if versions else None
         })
         if len(final_candidates) >= limit:
             break
@@ -285,7 +335,7 @@ def main():
                 continue
 
         # Add to history
-        history.add(get_seed_name(selected_anime['title']).lower())
+        history.add(selected_anime['title'])
         
         print(f"\n--- Reference Anime: {selected_anime['title']} ---")
         
@@ -295,7 +345,7 @@ def main():
         
         # 2. Extract genres and find top 25 candidates.
         print(f"\nFinding top 25 candidates with matching genres...")
-        genre_ids = [g["mal_id"] for g in selected_anime.get("genres", [])]
+        genre_ids = selected_anime.get("genre_ids", [])
         candidates = get_top_candidates_by_genre(genre_ids, selected_anime, history)
         
         if not candidates:

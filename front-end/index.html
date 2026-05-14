@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AniRec</title>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+:root {
+    --bg-color: #F5F5F5;
+    --text-color: #4A4A4A;
+    --accent-color: #8E9AAF;
+    --card-bg: #FFFFFF;
+    --border-radius: 8px;
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    --font-family: 'Quicksand', system-ui, -apple-system, sans-serif;
+    --font-weight: 500;
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-image: url('bkg.jpg');
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: var(--text-color);
+    font-family: var(--font-family);
+    font-weight: var(--font-weight);
+    line-height: 1.6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+}
+
+.container {
+    width: 100%;
+    max-width: 700px;
+    padding: 40px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    animation: fadeIn 0.8s ease-out;
+    position: relative;
+    z-index: 1;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+header {
+    text-align: center;
+}
+
+h1 {
+    font-weight: 600;
+    letter-spacing: -1px;
+    font-size: 2.5rem;
+    margin-bottom: 8px;
+    color: #333;
+    text-shadow: 1px 1px 4px rgba(0,0,0,0.3);
+}
+
+.subtitle {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* Search Section */
+.search-section {
+    position: relative;
+    width: 100%;
+}
+
+.input-wrapper {
+    position: relative;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 30px;
+    box-shadow: var(--shadow);
+    padding: 6px;
+    display: flex;
+    transition: var(--transition);
+    z-index: 101;
+}
+
+.search-section.dropdown-active .input-wrapper {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.input-wrapper:focus-within {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+input[type="text"] {
+    flex: 1;
+    border: none;
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    background: transparent;
+    color: var(--text-color);
+    outline: none;
+    font-family: inherit;
+    font-weight: var(--font-weight);
+}
+
+input[type="text"]::placeholder {
+    color: rgba(74, 74, 74, 0.4);
+    font-weight: 300;
+}
+
+#search-btn {
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    padding: 0 32px;
+    border-radius: 26px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+#search-btn:hover {
+    background: #7a869a;
+    filter: brightness(1.1);
+    box-shadow: 0 0 15px rgba(142, 154, 175, 0.4);
+    transform: translateY(-1px);
+}
+
+/* Results Dropdown */
+.results-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    width: 100%;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(5px);
+    border-bottom-left-radius: 30px;
+    border-bottom-right-radius: 30px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    z-index: 100;
+    max-height: 400px;
+    overflow-y: auto;
+    display: none;
+    animation: slideDown 0.3s ease-out;
+    border: none;
+    margin-top: -1px;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.results-list.active {
+    display: block;
+}
+
+.result-item {
+    padding: 12px 32px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.result-item:last-child {
+    border-bottom: none;
+}
+
+.result-item:hover {
+    background: rgba(0, 0, 0, 0.03);
+    padding-left: 40px;
+}
+
+.result-item img {
+    width: 48px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.result-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.result-name {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #333;
+}
+
+.result-meta {
+    font-size: 0.85rem;
+    color: #777;
+    font-weight: 400;
+}
+
+/* Loading Animation */
+.loading-overlay {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 40px 60px;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    border-radius: 40px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+}
+
+.loading-overlay.active {
+    display: flex;
+}
+
+.shuffler-box {
+    height: 40px;
+    overflow: hidden;
+    position: relative;
+    width: 100%;
+    text-align: center;
+}
+
+.shuffler-track {
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.shuffler-track span {
+    height: 40px;
+    line-height: 40px;
+    font-size: 1.2rem;
+    font-weight: 300;
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+}
+
+.title-shuffler {
+    text-align: left;
+    margin-bottom: 8px;
+}
+
+.title-shuffler .shuffler-track span {
+    font-size: 1.8rem;
+    font-weight: 600;
+    opacity: 1;
+    color: #333;
+}
+
+.poster-shuffler {
+    position: relative;
+    width: 320px;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+    background: #eee;
+}
+
+.shuffle-poster {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.shuffle-poster.active {
+    opacity: 1;
+}
+
+.loading-status {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: #333;
+    letter-spacing: 1px;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+}
+
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(0,0,0,0.1);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Recommendation Card */
+.recommendation-container {
+    display: none;
+}
+
+.recommendation-container.active {
+    display: block;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.recc-card {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    padding: 60px 40px;
+    border-radius: 16px;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.12);
+    position: relative;
+    max-width: 500px;
+    margin: 0 auto;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    animation: cardReveal 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 720px;
+}
+
+@keyframes cardReveal {
+    from { opacity: 0; transform: translateY(30px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Corner Brackets */
+.recc-card::before, .recc-card::after {
+    content: '';
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border-color: var(--accent-color);
+    border-style: solid;
+    pointer-events: none;
+    opacity: 0.8;
+    z-index: 3;
+}
+.recc-card::before { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
+.recc-card::after { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
+
+.card-frame {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    border-radius: 12px;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.recc-card img {
+    width: 320px;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    border-radius: 8px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+}
+
+.recc-info {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    align-items: center;
+}
+
+.recc-info h2 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -1px;
+    margin: 0;
+    color: #1a1a1a;
+}
+
+.recc-info h2 a {
+    text-decoration: none;
+    color: inherit;
+    transition: color 0.3s ease;
+}
+
+.recc-info h2 a:hover {
+    color: var(--accent-color);
+}
+
+.genre-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.genre-tag {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: #f0f2f5;
+    padding: 6px 16px;
+    border-radius: 20px;
+    color: #666;
+    border: 1px solid transparent;
+}
+
+
+.recc-actions {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    max-width: 500px;
+    margin: 24px auto 0;
+    justify-content: center;
+}
+
+.btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 30px; /* Pill shape */
+    cursor: pointer;
+    font-weight: 600;
+    font-family: inherit;
+    transition: var(--transition);
+    text-align: center;
+    box-shadow: var(--shadow);
+}
+
+.btn-primary {
+    background: var(--accent-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #7a869a;
+}
+
+.btn-secondary {
+    background: #f0f2f5;
+    color: var(--text-color);
+}
+
+.btn-secondary:hover {
+    background: #e4e7eb;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #ddd;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #ccc;
+}
+/* Top Links */
+.top-links {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    display: flex;
+    gap: 16px;
+    z-index: 100;
+}
+
+.top-link {
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    transition: var(--transition);
+}
+
+.top-link img {
+    width: 24px;
+    height: 24px;
+    opacity: 0.7;
+    transition: var(--transition);
+}
+
+.top-link:hover {
+    transform: translateY(-2px);
+}
+
+.top-link:hover img {
+    opacity: 1;
+}
+
+.top-link:hover img {
+    filter: grayscale(0%) brightness(1) opacity(1);
+}
+
+/* No Matches Overlay */
+.no-matches-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85); /* Dark background for clear contrast */
+    backdrop-filter: blur(15px);
+    z-index: 2000;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 20px;
+    color: white;
+}
+
+.no-matches-overlay.active {
+    display: flex;
+}
+
+.no-matches-content h2 {
+    font-size: 2.5rem;
+    margin-bottom: 16px;
+    color: white;
+}
+
+.no-matches-content p {
+    font-size: 1.1rem;
+    margin-bottom: 32px;
+    opacity: 0.8;
+    color: white;
+}
+    </style></head>
+<body>
+    <nav class="top-links">
+        <a href="https://myanimelist.net" target="_blank" class="top-link" title="MyAnimeList">
+            <img src="https://myanimelist.net/favicon.ico" alt="MAL">
+        </a>
+        <a href="https://anilist.co" target="_blank" class="top-link" title="AniList">
+            <img src="https://anilist.co/favicon.ico" alt="AniList">
+        </a>
+    </nav>
+    <div class="container">
+        <header>
+            <h1>AniRec</h1>
+        </header>
+
+        <main>
+            <!-- Search Section -->
+            <section class="search-section" id="search-section">
+                <div class="input-wrapper">
+                    <input type="text" id="anime-input" placeholder="Search for an anime franchise..." autocomplete="off">
+                    <button id="search-btn">Search</button>
+                </div>
+                <div class="results-list" id="results-list">
+                    <!-- Search results injected here -->
+                </div>
+            </section>
+
+            <section class="loading-overlay" id="loading-overlay">
+                <div class="spinner"></div>
+                <div class="loading-status">Discovering...</div>
+            </section>
+
+            <!-- Shuffling Section (Poster Shuffle Reveal) -->
+            <section class="recommendation-container" id="shuffle-section">
+                <div class="recc-card">
+                    <div class="card-frame"></div>
+                    <div class="poster-shuffler" id="poster-shuffler">
+                        <!-- Shuffled posters injected here -->
+                    </div>
+                    <div class="recc-info">
+                        <div class="shuffler-box title-shuffler">
+                            <div class="shuffler-track" id="title-track">
+                                <!-- Shuffled titles injected here -->
+                            </div>
+                        </div>
+                        <div class="genre-container placeholder">
+                            <span class="genre-tag">Matching...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recommendation Section -->
+            <section class="recommendation-container" id="recommendation-container">
+                <div class="recc-card">
+                    <div class="card-frame"></div>
+                    <img id="recc-img" src="" alt="">
+                    <div class="recc-info">
+                        <h2 id="recc-title-container"><a id="recc-link" href="#" target="_blank"><span id="recc-title"></span></a></h2>
+                        <div class="genre-container" id="recc-genres"></div>
+                    </div>
+                </div>
+                <div class="recc-actions">
+                    <button class="btn btn-primary" id="continue-btn">Continue Chain</button>
+                    <button class="btn btn-secondary" id="reset-btn">New Search</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div class="no-matches-overlay" id="no-matches-overlay">
+        <div class="no-matches-content">
+            <h2>Chain Ended</h2>
+            <p>We've explored all relevant branches. No new unique franchises found.</p>
+            <button class="btn btn-primary" onclick="resetUI()">Start Fresh</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://127.0.0.1:5000';
+        const animeInput = document.getElementById('anime-input');
+        const searchBtn = document.getElementById('search-btn');
+        const resultsList = document.getElementById('results-list');
+        const searchSection = document.getElementById('search-section');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const recommendationContainer = document.getElementById('recommendation-container');
+        const shufflerTrack = document.getElementById('shuffler-track');
+
+        // State
+        let chainHistory = [];
+        let chainDepth = 0;
+        let shuffleInterval;
+
+        // --- Search Logic ---
+        let searchTimeout;
+        animeInput.addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            const query = animeInput.value.trim();
+            if (query.length < 2) {
+                resultsList.classList.remove('active');
+                searchSection.classList.remove('dropdown-active');
+                return;
+            }
+            searchTimeout = setTimeout(() => performSearch(query), 300);
+        });
+
+        async function performSearch(query) {
+            try {
+                const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await res.json();
+                
+                if (data.error || !data.length) {
+                    resultsList.innerHTML = '<div class="result-item">No results found</div>';
+                } else {
+                    resultsList.innerHTML = data.map(anime => `
+                        <div class="result-item" onclick="selectAnime('${anime.title.replace(/'/g, "\\'")}')">
+                            <img src="${anime.images?.webp?.large_image_url || anime.images?.jpg?.large_image_url || ''}" alt="">
+                            <div class="result-info">
+                                <span class="result-name">${anime.title}</span>
+                                <span class="result-meta">${anime.type || 'TV'} • ${anime.score ? anime.score.toFixed(1) : 'N/A'} Score</span>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                resultsList.classList.add('active');
+                searchSection.classList.add('dropdown-active');
+            } catch (err) {
+                console.error('Search failed', err);
+            }
+        }
+
+        // Close dropdown on click outside
+        document.addEventListener('click', (e) => {
+            if (!searchSection.contains(e.target)) {
+                resultsList.classList.remove('active');
+                searchSection.classList.remove('dropdown-active');
+            }
+        });
+
+        // --- Recommendation Logic ---
+        function selectAnime(title) {
+            resultsList.classList.remove('active');
+            searchSection.classList.remove('dropdown-active');
+            animeInput.value = title;
+            startRecommendation(title);
+        }
+
+        searchBtn.addEventListener('click', () => {
+            const title = animeInput.value.trim();
+            if (title) startRecommendation(title);
+        });
+
+        async function startRecommendation(title) {
+            // UI Reset
+            searchSection.style.display = 'none';
+            recommendationContainer.classList.remove('active');
+            document.getElementById('shuffle-section').classList.remove('active');
+            loadingOverlay.classList.add('active');
+
+            try {
+                const res = await fetch(`${API_BASE}/recommend`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        history: chainHistory,
+                        chain_depth: chainDepth
+                    })
+                });
+                
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+
+                loadingOverlay.classList.remove('active');
+
+                // Start the Card Shuffle Reveal
+                await performPosterShuffle(data);
+
+            } catch (err) {
+                alert('Error: ' + err.message);
+                resetUI();
+            }
+        }
+
+        async function performPosterShuffle(data) {
+            const shuffleSection = document.getElementById('shuffle-section');
+            const posterShuffler = document.getElementById('poster-shuffler');
+            const titleTrack = document.getElementById('title-track');
+            
+            shuffleSection.classList.add('active');
+            posterShuffler.innerHTML = '';
+            titleTrack.innerHTML = '';
+
+            const candidates = data.all_candidates;
+            const winner = data.top_match.data;
+
+            // Prepare posters and titles for shuffling
+            const pool = candidates.slice(0, 10);
+            if (!pool.find(c => c['Anime Name'] === winner['Anime Name'])) {
+                pool.push(winner);
+            }
+
+            pool.forEach((anime, i) => {
+                const img = document.createElement('img');
+                img.src = anime['Image URL'] || anime.images?.jpg?.large_image_url || '';
+                img.className = 'shuffle-poster';
+                img.id = `poster-${i}`;
+                posterShuffler.appendChild(img);
+
+                const titleSpan = document.createElement('span');
+                titleSpan.innerText = anime['Anime Name'] || anime.title;
+                titleTrack.appendChild(titleSpan);
+            });
+
+            // Shuffle Animation
+            let currentIndex = 0;
+            const shuffleCount = 12;
+            const delay = 150;
+
+            for (let i = 0; i < shuffleCount; i++) {
+                const prevIndex = currentIndex;
+                currentIndex = Math.floor(Math.random() * pool.length);
+                
+                // Poster Cross-fade
+                const prevImg = document.getElementById(`poster-${prevIndex}`);
+                const currentImg = document.getElementById(`poster-${currentIndex}`);
+                if (prevImg) prevImg.classList.remove('active');
+                if (currentImg) currentImg.classList.add('active');
+
+                // Title Vertical Scroll
+                titleTrack.style.transform = `translateY(-${currentIndex * 40}px)`;
+
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+
+            // Final Reveal
+            shuffleSection.classList.remove('active');
+            displayRecommendation(data);
+        }
+
+        function displayRecommendation(data) {
+            const recc = data.top_match.data;
+            if (!recc) {
+                document.getElementById('no-matches-overlay').classList.add('active');
+                return;
+            }
+
+            // Update state (Machine-side Reference Map)
+            const refName = data.reference['Anime Name'];
+            const reccName = recc['Anime Name'];
+            
+            // Log both reference and recommendation to ensure no repeats from either side
+            if (!chainHistory.includes(refName)) chainHistory.push(refName);
+            if (!chainHistory.includes(reccName)) chainHistory.push(reccName);
+
+            // Update UI
+            document.getElementById('recc-img').src = recc['Image URL'] || '';
+            
+            const titleElem = document.getElementById('recc-title');
+            titleElem.textContent = reccName;
+            
+            // Dynamic Font Scaling
+            if (reccName.length > 40) titleElem.style.fontSize = '1.4rem';
+            else if (reccName.length > 30) titleElem.style.fontSize = '1.6rem';
+            else if (reccName.length > 20) titleElem.style.fontSize = '1.9rem';
+            else titleElem.style.fontSize = '2.2rem';
+
+            document.getElementById('recc-link').href = `https://myanimelist.net/anime/${recc.MAL_ID || ''}`;
+            
+            document.getElementById('recc-genres').innerHTML = (recc.Genres || [])
+                .map(g => `<span class="genre-tag">${g}</span>`).join('');
+
+            recommendationContainer.classList.add('active');
+
+            // Setup Continue Button
+            document.getElementById('continue-btn').onclick = () => {
+                chainDepth++;
+                startRecommendation(reccName);
+            };
+        }
+
+        function resetUI() {
+            chainHistory = [];
+            chainDepth = 0;
+            animeInput.value = '';
+            searchSection.style.display = 'block';
+            document.getElementById('shuffle-section').classList.remove('active');
+            recommendationContainer.classList.remove('active');
+            loadingOverlay.classList.remove('active');
+            document.getElementById('no-matches-overlay').classList.remove('active');
+        }
+
+        document.getElementById('reset-btn').addEventListener('click', resetUI);
+
+    </script>
+</body>
+</html>
