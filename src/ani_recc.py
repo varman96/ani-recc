@@ -5,36 +5,129 @@ This script allows users to search for anime titles using the Jikan API,
 extract key metadata, and display it as a JSON-based structure.
 """
 
-import json
-import argparse
-import requests
-import knn
-import logging
 import time
+import requests
+import json
+import logging
+import threading
+import argparse
+from pathlib import Path
+import knn
 
 logger = logging.getLogger(__name__)
-DEFAULT_REQUEST_TIMEOUT = 10
-MIN_JIKAN_REQUEST_INTERVAL = 0.34
-_LAST_JIKAN_REQUEST_AT = 0.0
+
+DEFAULT_REQUEST_TIMEOUT = 5
+MIN_JIKAN_REQUEST_INTERVAL = 0.34  # Jikan's ~3 req/sec limit
+_LAST_JIKAN_REQUEST_AT = time.monotonic() - MIN_JIKAN_REQUEST_INTERVAL  # Allow immediate first call
+_rate_lock = threading.Lock()  # Thread-safe pacing (optional but recommended)
+MAX_CHAIN_DEPTH = 5
+CACHE_TTL_SECONDS = 24 * 60 * 60
+JIKAN_CACHE_PATH = Path(__file__).resolve().parents[1] / ".cache" / "jikan_response_cache.json"
+_JIKAN_CACHE = None
+_jikan_cache_lock = threading.Lock()
+
+
+def _validate_positive_int(value, name):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _validate_history(history):
+    if history is None:
+        return []
+    if not isinstance(history, list):
+        raise TypeError("history must be a flat list of integers")
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in history):
+        raise ValueError("history must be a flat list of integers")
+    return history
+
+
+def _validate_chain_depth(chain_depth):
+    if isinstance(chain_depth, bool) or not isinstance(chain_depth, int):
+        raise TypeError("chain_depth must be an integer")
+    if not 0 <= chain_depth <= MAX_CHAIN_DEPTH:
+        raise ValueError(f"chain_depth must be between 0 and {MAX_CHAIN_DEPTH}")
+
+
+def _build_jikan_cache_key(url, params=None):
+    return requests.Request("GET", url, params=params).prepare().url
+
+
+def _load_jikan_cache_unlocked():
+    global _JIKAN_CACHE
+
+    if _JIKAN_CACHE is not None:
+        return _JIKAN_CACHE
+
+    try:
+        with JIKAN_CACHE_PATH.open("r", encoding="utf-8") as handle:
+            cache = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        cache = {}
+
+    now = time.time()
+    _JIKAN_CACHE = {
+        key: value
+        for key, value in cache.items()
+        if isinstance(value, dict)
+        and isinstance(value.get("ts"), (int, float))
+        and now - value["ts"] < CACHE_TTL_SECONDS
+        and "value" in value
+    }
+    return _JIKAN_CACHE
+
+
+def _save_jikan_cache_unlocked(cache):
+    JIKAN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with JIKAN_CACHE_PATH.open("w", encoding="utf-8") as handle:
+        json.dump(cache, handle, ensure_ascii=True, indent=2)
+
+
+def clear_jikan_cache():
+    """
+    Clears the in-memory and on-disk Jikan response cache.
+    """
+    global _JIKAN_CACHE
+
+    with _jikan_cache_lock:
+        _JIKAN_CACHE = {}
+        try:
+            JIKAN_CACHE_PATH.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _get_jikan_json(url, *, params=None, context="Jikan request"):
     """
-    Performs a single Jikan request with a shared timeout and unified failure handling.
-    Any failure raises immediately so callers do not silently continue with partial data.
+    Performs a single Jikan request with dynamic rate limiting, strict timeout, 
+    and unified failure handling. Fails immediately on any error.
     """
     global _LAST_JIKAN_REQUEST_AT
 
-    try:
+    cache_key = _build_jikan_cache_key(url, params=params)
+    now = time.time()
+
+    with _jikan_cache_lock:
+        cache = _load_jikan_cache_unlocked()
+        cached_entry = cache.get(cache_key)
+        if cached_entry and now - cached_entry["ts"] < CACHE_TTL_SECONDS:
+            return cached_entry["value"]
+        if cached_entry:
+            cache.pop(cache_key, None)
+            _save_jikan_cache_unlocked(cache)
+
+    with _rate_lock:
         now = time.monotonic()
         elapsed = now - _LAST_JIKAN_REQUEST_AT
         if elapsed < MIN_JIKAN_REQUEST_INTERVAL:
             time.sleep(MIN_JIKAN_REQUEST_INTERVAL - elapsed)
-
+        
         response = requests.get(url, params=params, timeout=DEFAULT_REQUEST_TIMEOUT)
         _LAST_JIKAN_REQUEST_AT = time.monotonic()
+
+    try:
         response.raise_for_status()
-        return response.json()
+        payload = response.json()
     except requests.exceptions.Timeout as e:
         logger.error("%s timed out after %ss: %s", context, DEFAULT_REQUEST_TIMEOUT, url)
         raise RuntimeError(f"{context} timed out after {DEFAULT_REQUEST_TIMEOUT}s") from e
@@ -43,17 +136,26 @@ def _get_jikan_json(url, *, params=None, context="Jikan request"):
         logger.error("%s failed with HTTP %s: %s", context, status_code, url)
         raise RuntimeError(f"{context} failed with HTTP {status_code}") from e
     except requests.exceptions.RequestException as e:
-        logger.error("%s failed: %s", context, e)
-        raise RuntimeError(f"{context} failed: {e}") from e
+        logger.error("%s network error: %s", context, e)
+        raise RuntimeError(f"{context} network error: {e}") from e
     except json.JSONDecodeError as e:
         logger.error("%s returned invalid JSON: %s", context, url)
         raise RuntimeError(f"{context} returned invalid JSON") from e
+
+    with _jikan_cache_lock:
+        cache = _load_jikan_cache_unlocked()
+        cache[cache_key] = {"ts": time.time(), "value": payload}
+        _save_jikan_cache_unlocked(cache)
+
+    return payload
+
 
 def get_franchise_mal_ids(mal_id):
     """
     Fetches all related anime MAL IDs for a given seed anime to build a franchise lookup set.
     Fails immediately on request errors so callers do not continue with partial data.
     """
+    _validate_positive_int(mal_id, "mal_id")
     base_url = f"https://api.jikan.moe/v4/anime/{mal_id}/relations"
     related_ids = {mal_id} # Always include the seed itself
 
@@ -193,6 +295,7 @@ def fetch_anime_by_mal_id(mal_id):
     """
     Fetches the full anime record for a MAL ID from Jikan.
     """
+    _validate_positive_int(mal_id, "mal_id")
     base_url = f"https://api.jikan.moe/v4/anime/{mal_id}"
     anime = _get_jikan_json(base_url, context=f"Fetching anime details for MAL ID {mal_id}").get("data", {})
     if anime and "genre_ids" not in anime:
@@ -204,6 +307,10 @@ def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
     """
     Builds a recommendation payload directly from a MAL ID.
     """
+    _validate_positive_int(mal_id, "mal_id")
+    history = _validate_history(history)
+    _validate_chain_depth(chain_depth)
+
     selected_anime = fetch_anime_by_mal_id(mal_id)
     if not selected_anime:
         return {
@@ -215,7 +322,7 @@ def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
 
     metadata = fetch_anime_details(selected_anime)
 
-    history_set = set(history or [])
+    history_set = set(history)
     history_set.add(selected_anime["mal_id"])
 
     genre_ids = selected_anime.get("genre_ids", [])
@@ -382,8 +489,13 @@ def main():
         """
         Handles both auto-selection and manual selection.
         """
-        if chain_depth > 0 and results[0]["title"].lower() == current_query.lower():
-            return results[0]
+        if chain_depth > 0:
+            exact_match = next(
+                (anime for anime in results if anime["title"].lower() == current_query.lower()),
+                None
+            )
+            if exact_match:
+                return exact_match
 
         logger.info("--- Search Results ---")
         for i, anime in enumerate(results, start=1):
@@ -437,6 +549,7 @@ def main():
         history = set()
         chain_depth = 0
         current_query = args.title
+        results = None
 
         while True:
             if not current_query:
@@ -445,23 +558,29 @@ def main():
                     break
                 history = set()
                 chain_depth = 0
+                results = None
 
+            if results is None:
+                clear_jikan_cache()
                 logger.info("Searching for matches for '%s'...", current_query)
                 results = search_anime(current_query)
 
             if not results:
                 logger.warning("No results found. Please try a different title.")
                 current_query = None
+                results = None
                 continue
 
             selected_anime = select_anime(results, current_query, chain_depth)
             if not selected_anime:
                 current_query = None
+                results = None
                 continue
 
             top_match_name, _ = consolidate(selected_anime, history, chain_depth)
             if top_match_name is None:
                 current_query = None
+                results = None
                 continue
 
             prompt = "\n[R] Refresh (New Search) | [X] Exit"
@@ -471,12 +590,15 @@ def main():
             action = input(f"{prompt}: ").lower()
 
             if action == "x":
+                clear_jikan_cache()
                 break
             elif action == "c" and top_match_name:
                 current_query = top_match_name
                 chain_depth += 1
+                results = None
             else:
                 current_query = None
+                results = None
 
     manage_loop()
 

@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, request, jsonify, send_from_directory
 import logging
 from src import ani_recc
@@ -26,12 +28,15 @@ def get_recommendation():
     if "mal_id" not in data:
         return jsonify({"error": "Missing 'mal_id' in request body"}), 400
 
-    result = ani_recc.get_recommendation_by_mal_id(
-        data["mal_id"],
-        history=data.get("history", []),
-        chain_depth=data.get("chain_depth", 0)
-    )
-    return jsonify(result), 200
+    try:
+        result = ani_recc.get_recommendation_by_mal_id(
+            data["mal_id"],
+            history=data.get("history", []),
+            chain_depth=data.get("chain_depth", 0)
+        )
+        return jsonify(result), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route('/search', methods=['GET'])
 def search():
@@ -57,4 +62,5 @@ if __name__ == '__main__':
     # Run on port 5000 by default
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting Anime Recommendation API...")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    debug = os.getenv("FLASK_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+    app.run(debug=debug, host='127.0.0.1', port=5000)
