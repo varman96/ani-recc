@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
+import logging
 from src import ani_recc
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
-# The "Restricted" - Only allow your specific frontend
-CORS(app, resources={r"/*": {"origins": "http://127.0.0.1:5000"}})
+
+logger = logging.getLogger(__name__)
 
 @app.route('/')
 def serve_index():
@@ -55,5 +55,6 @@ def health_check():
 
 if __name__ == '__main__':
     # Run on port 5000 by default
-    print("Starting Anime Recommendation API...")
+    logging.basicConfig(level=logging.INFO)
+    logger.info("Starting Anime Recommendation API...")
     app.run(debug=True, host='0.0.0.0', port=5000)

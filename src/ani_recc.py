@@ -9,34 +9,59 @@ import json
 import argparse
 import requests
 import knn
-import re
+import logging
 import time
+
+logger = logging.getLogger(__name__)
+DEFAULT_REQUEST_TIMEOUT = 10
+MIN_JIKAN_REQUEST_INTERVAL = 0.34
+_LAST_JIKAN_REQUEST_AT = 0.0
+
+
+def _get_jikan_json(url, *, params=None, context="Jikan request"):
+    """
+    Performs a single Jikan request with a shared timeout and unified failure handling.
+    Any failure raises immediately so callers do not silently continue with partial data.
+    """
+    global _LAST_JIKAN_REQUEST_AT
+
+    try:
+        now = time.monotonic()
+        elapsed = now - _LAST_JIKAN_REQUEST_AT
+        if elapsed < MIN_JIKAN_REQUEST_INTERVAL:
+            time.sleep(MIN_JIKAN_REQUEST_INTERVAL - elapsed)
+
+        response = requests.get(url, params=params, timeout=DEFAULT_REQUEST_TIMEOUT)
+        _LAST_JIKAN_REQUEST_AT = time.monotonic()
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.Timeout as e:
+        logger.error("%s timed out after %ss: %s", context, DEFAULT_REQUEST_TIMEOUT, url)
+        raise RuntimeError(f"{context} timed out after {DEFAULT_REQUEST_TIMEOUT}s") from e
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        logger.error("%s failed with HTTP %s: %s", context, status_code, url)
+        raise RuntimeError(f"{context} failed with HTTP {status_code}") from e
+    except requests.exceptions.RequestException as e:
+        logger.error("%s failed: %s", context, e)
+        raise RuntimeError(f"{context} failed: {e}") from e
+    except json.JSONDecodeError as e:
+        logger.error("%s returned invalid JSON: %s", context, url)
+        raise RuntimeError(f"{context} returned invalid JSON") from e
 
 def get_franchise_mal_ids(mal_id):
     """
     Fetches all related anime MAL IDs for a given seed anime to build a franchise lookup set.
-    Includes retry logic for 429 Too Many Requests.
+    Fails immediately on request errors so callers do not continue with partial data.
     """
     base_url = f"https://api.jikan.moe/v4/anime/{mal_id}/relations"
     related_ids = {mal_id} # Always include the seed itself
-    
-    for attempt in range(3):
-        try:
-            time.sleep(0.34) # Rate limiting protection (Jikan API is 3 req/sec)
-            response = requests.get(base_url)
-            response.raise_for_status()
-            relations_data = response.json().get("data", [])
-            
-            for relation in relations_data:
-                for entry in relation.get("entry", []):
-                    if entry.get("type") == "anime":
-                        related_ids.add(entry.get("mal_id"))
-            break
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                time.sleep(1 + attempt) # Exponential backoff
-            else:
-                break
+
+    relations_data = _get_jikan_json(base_url, context=f"Fetching relations for MAL ID {mal_id}").get("data", [])
+    for relation in relations_data:
+        for entry in relation.get("entry", []):
+            if entry.get("type") == "anime":
+                related_ids.add(entry.get("mal_id"))
     
     return related_ids
 
@@ -59,9 +84,7 @@ def search_anime(query):
     """
     base_url = "https://api.jikan.moe/v4/anime"
     params = {"q": query, "limit": 25}
-    response = requests.get(base_url, params=params)
-    response.raise_for_status()
-    search_results = response.json()
+    search_results = _get_jikan_json(base_url, params=params, context=f"Searching anime for query '{query}'")
     
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
@@ -144,9 +167,7 @@ def fetch_anime_details(selected_anime):
     """
     mal_id = selected_anime["mal_id"]
     base_url = f"https://api.jikan.moe/v4/anime/{mal_id}/recommendations"
-    response = requests.get(base_url)
-    response.raise_for_status()
-    recs_res = response.json()
+    recs_res = _get_jikan_json(base_url, context=f"Fetching recommendations for MAL ID {mal_id}")
     
     # Clean the recommendation titles and take ONLY the top 3
     recommendations = [r["entry"]["title"] for r in recs_res["data"][:3]]
@@ -173,9 +194,7 @@ def fetch_anime_by_mal_id(mal_id):
     Fetches the full anime record for a MAL ID from Jikan.
     """
     base_url = f"https://api.jikan.moe/v4/anime/{mal_id}"
-    response = requests.get(base_url)
-    response.raise_for_status()
-    anime = response.json().get("data", {})
+    anime = _get_jikan_json(base_url, context=f"Fetching anime details for MAL ID {mal_id}").get("data", {})
     if anime and "genre_ids" not in anime:
         anime["genre_ids"] = [g.get("mal_id") for g in anime.get("genres", []) if g.get("mal_id") is not None]
     return anime
@@ -239,13 +258,11 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
         "min_score": 1,
         "limit": 25
     }
-    response = requests.get(base_url, params=params)
-    response.raise_for_status()
-    search_results = response.json()
+    search_results = _get_jikan_json(base_url, params=params, context=f"Fetching candidate pool for MAL ID {selected_anime['mal_id']}")
 
     source_genre_ids = set(genre_ids)
     source_mal_id = selected_anime["mal_id"]
-    print(f"Fetching relations for source anime: {selected_anime['title']}...")
+    logger.info("Fetching relations for source anime: %s...", selected_anime["title"])
     source_franchise_ids = get_franchise_mal_ids(source_mal_id)
     
     allowed_types = ["TV", "Movie"]
@@ -368,9 +385,9 @@ def main():
         if chain_depth > 0 and results[0]["title"].lower() == current_query.lower():
             return results[0]
 
-        print("\n--- Search Results ---")
+        logger.info("--- Search Results ---")
         for i, anime in enumerate(results, start=1):
-            print(f"[{i}] {anime['title']}")
+            logger.info("[%s] %s", i, anime["title"])
 
         try:
             choice_raw = input("\nPick a number (1-5) or 0 to cancel: ")
@@ -378,11 +395,11 @@ def main():
                 return None
             choice = int(choice_raw)
             if choice == 0:
-                print("Operation cancelled.")
+                logger.warning("Operation cancelled.")
                 return None
             return results[choice - 1]
         except (ValueError, IndexError):
-            print("Invalid selection.")
+            logger.warning("Invalid selection.")
             return None
 
     def consolidate(selected_anime, history, chain_depth):
@@ -391,24 +408,24 @@ def main():
         """
         history.add(selected_anime["mal_id"])
 
-        print(f"\n--- Reference Anime: {selected_anime['title']} ---")
+        logger.info("--- Reference Anime: %s ---", selected_anime["title"])
 
         metadata = fetch_anime_details(selected_anime)
-        print(json.dumps(metadata, indent=4, ensure_ascii=True))
+        logger.info(json.dumps(metadata, indent=4, ensure_ascii=True))
 
-        print("\nFinding top 25 candidates with matching genres...")
+        logger.info("Finding top 25 candidates with matching genres...")
         genre_ids = selected_anime.get("genre_ids", [])
         candidates = get_top_candidates_by_genre(genre_ids, selected_anime, history)
 
         if not candidates:
-            print("No new candidates found in this chain! Try a fresh search.")
+            logger.warning("No new candidates found in this chain! Try a fresh search.")
             return None, None
 
-        print("\n--- Candidate Pool (Aggregated Franchises) ---")
+        logger.info("--- Candidate Pool (Aggregated Franchises) ---")
         for i, anime in enumerate(candidates, start=1):
             version_text = f"({anime['Version Count']} versions)"
             score_display = f"(Avg Score: {round(anime['MAL Score'], 2)})"
-            print(f"[{i}] {anime['Anime Name']} {version_text} {score_display}")
+            logger.info("[%s] %s %s %s", i, anime["Anime Name"], version_text, score_display)
 
         top_match_name = knn.process_vectors(metadata, candidates, chain_depth)
         return top_match_name, candidates
@@ -429,11 +446,11 @@ def main():
                 history = set()
                 chain_depth = 0
 
-            print(f"\nSearching for matches for '{current_query}'...")
-            results = search_anime(current_query)
+                logger.info("Searching for matches for '%s'...", current_query)
+                results = search_anime(current_query)
 
             if not results:
-                print("No results found. Please try a different title.")
+                logger.warning("No results found. Please try a different title.")
                 current_query = None
                 continue
 
@@ -464,4 +481,5 @@ def main():
     manage_loop()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     main()

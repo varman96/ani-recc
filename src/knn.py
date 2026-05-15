@@ -5,9 +5,10 @@ This module provides utility functions to convert anime metadata into
 normalized feature vectors, allowing for similarity comparisons.
 """
 
-import json
+import logging
 import math
 
+logger = logging.getLogger(__name__)
 
 def calculate_cosine_similarity(vec1, vec2):
     """
@@ -70,11 +71,11 @@ def create_vector(anime_data, target_genres, target_themes, target_demos, target
 
     # 5. Normalized Rank
     rank = anime_data.get("Rank") or max_rank
-    vector.append(round(rank / max_rank, 4) * W_TIEBREAKER if max_rank > 0 else 0)
+    vector.append(round((max_rank - rank) / max_rank, 4) * W_TIEBREAKER if max_rank > 0 else 0)
     
     # 6. Normalized Popularity
     pop = anime_data.get("Popularity") or max_pop
-    vector.append(round(pop / max_pop, 4) * W_TIEBREAKER if max_pop > 0 else 0)
+    vector.append(round((max_pop - pop) / max_pop, 4) * W_TIEBREAKER if max_pop > 0 else 0)
     
     # 7. Normalized Members
     mem = anime_data.get("Members") or 0
@@ -113,9 +114,9 @@ def process_vectors(ref_data, candidate_pool_data, chain_depth=0):
     diff = 10.0 - sum(weights.values())
     weights["THEME"] = round(weights["THEME"] + diff, 2)
     
-    print(f"\n--- Weight Distribution (Total: 10.0) ---")
+    logger.info("--- Weight Distribution (Total: 10.0) ---")
     for k, v in weights.items():
-        print(f"  {k}: {v} ({round(v * 10)}% importance)")
+        logger.info("  %s: %s (%s%% importance)", k, v, round(v * 10))
     
 
     # Calculate Normalization Maxima across the entire pool.
@@ -129,7 +130,7 @@ def process_vectors(ref_data, candidate_pool_data, chain_depth=0):
     target_demos = ref_data.get("Demographics", [])
     target_recommendations = set(ref_data.get("Recommendations", []))
     
-    print("\n--- KNN Vectors [Genres, Themes, Demographics, Recommendations, Rank_Norm, Pop_Norm, Mem_Norm] ---")
+    logger.info("--- KNN Vectors [Genres, Themes, Demographics, Recommendations, Rank_Norm, Pop_Norm, Mem_Norm] ---")
     
     # Generate the reference vector first
     ref_vector = create_vector(
@@ -144,12 +145,12 @@ def process_vectors(ref_data, candidate_pool_data, chain_depth=0):
         weights,
         is_ref=True
     )
-    print(f"{ref_data['Anime Name']} (Ref): {ref_vector}")
+    logger.info("%s (Ref): %s", ref_data["Anime Name"], ref_vector)
     
     best_score = -1
     best_match = None
     
-    print("\n--- Similarity Scores ---")
+    logger.info("--- Similarity Scores ---")
     for anime in candidate_pool_data:
         candidate_vector = create_vector(
             anime, 
@@ -166,13 +167,13 @@ def process_vectors(ref_data, candidate_pool_data, chain_depth=0):
         
         # Calculate similarity against the reference
         score = calculate_cosine_similarity(ref_vector, candidate_vector)
-        print(f"{anime['Anime Name']}: {round(score, 4)}")
+        logger.info("%s: %s", anime["Anime Name"], round(score, 4))
         
         if score > best_score:
             best_score = score
             best_match = anime['Anime Name']
             
     if best_match:
-        print(f"\n>>> Top Match: {best_match} (Score: {round(best_score, 4)}) <<<")
+        logger.info(">>> Top Match: %s (Score: %s) <<<", best_match, round(best_score, 4))
         
     return best_match
