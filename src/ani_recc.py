@@ -168,6 +168,61 @@ def fetch_anime_details(selected_anime):
     return data
 
 
+def fetch_anime_by_mal_id(mal_id):
+    """
+    Fetches the full anime record for a MAL ID from Jikan.
+    """
+    base_url = f"https://api.jikan.moe/v4/anime/{mal_id}"
+    response = requests.get(base_url)
+    response.raise_for_status()
+    anime = response.json().get("data", {})
+    if anime and "genre_ids" not in anime:
+        anime["genre_ids"] = [g.get("mal_id") for g in anime.get("genres", []) if g.get("mal_id") is not None]
+    return anime
+
+
+def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
+    """
+    Builds a recommendation payload directly from a MAL ID.
+    """
+    selected_anime = fetch_anime_by_mal_id(mal_id)
+    if not selected_anime:
+        return {
+            "reference": None,
+            "top_match": None,
+            "all_candidates": [],
+            "message": f"No anime found for MAL ID '{mal_id}'."
+        }
+
+    metadata = fetch_anime_details(selected_anime)
+
+    history_set = set(history or [])
+    history_set.add(selected_anime["mal_id"])
+
+    genre_ids = selected_anime.get("genre_ids", [])
+    candidates = get_top_candidates_by_genre(genre_ids, selected_anime, history_set, limit=limit)
+
+    if not candidates:
+        return {
+            "reference": metadata,
+            "top_match": None,
+            "all_candidates": [],
+            "message": "No suitable candidates found for recommendation."
+        }
+
+    top_match_name = knn.process_vectors(metadata, candidates, chain_depth=chain_depth)
+    top_match_data = next((c for c in candidates if c["Anime Name"] == top_match_name), None)
+
+    return {
+        "reference": metadata,
+        "top_match": {
+            "name": top_match_name,
+            "data": top_match_data
+        },
+        "all_candidates": candidates[:10]
+    }
+
+
 def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limit=25):
     """
     Finds and aggregates top-ranked animes by genre, merging sequels and excluding seen history.
