@@ -10,23 +10,41 @@ import argparse
 import requests
 import knn
 import re
+import time
 
+def get_franchise_mal_ids(mal_id):
+    """
+    Fetches all related anime MAL IDs for a given seed anime to build a franchise lookup set.
+    Includes retry logic for 429 Too Many Requests.
+    """
+    base_url = f"https://api.jikan.moe/v4/anime/{mal_id}/relations"
+    related_ids = {mal_id} # Always include the seed itself
+    
+    for attempt in range(3):
+        try:
+            time.sleep(0.34) # Rate limiting protection (Jikan API is 3 req/sec)
+            response = requests.get(base_url)
+            response.raise_for_status()
+            relations_data = response.json().get("data", [])
+            
+            for relation in relations_data:
+                for entry in relation.get("entry", []):
+                    if entry.get("type") == "anime":
+                        related_ids.add(entry.get("mal_id"))
+            break
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                time.sleep(1 + attempt) # Exponential backoff
+            else:
+                break
+    
+    return related_ids
 
-def is_same_franchise(title1, title2, threshold=0.5):
+def is_same_franchise(target_mal_id, franchise_mal_ids_set):
     """
-    Checks if two titles belong to the same franchise using word overlap.
-    Calculates the percentage of shared words relative to the shorter title.
+    Checks if a target anime belongs to a franchise using a pre-computed lookup set.
     """
-    words1 = set(re.findall(r'\b\w+\b', title1.lower()))
-    words2 = set(re.findall(r'\b\w+\b', title2.lower()))
-    
-    if not words1 or not words2:
-        return False
-        
-    overlap = len(words1.intersection(words2))
-    shorter_len = min(len(words1), len(words2))
-    
-    return (overlap / shorter_len) >= threshold
+    return target_mal_id in franchise_mal_ids_set
 
 
 def search_anime(query):
@@ -48,7 +66,7 @@ def search_anime(query):
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
     
-    franchises = {} # seed_name_lower -> aggregated_franchise_record
+    franchises = {} # seed_mal_id -> aggregated_franchise_record
     
     for anime in search_results["data"]:
         # 1. Type, Genre & Rating Filtering
@@ -59,17 +77,19 @@ def search_anime(query):
         if not anime.get("score") or anime.get("score") == 0:
             continue
             
-        # 2. Aggregation by Word Overlap
-        title = anime["title"]
-        
+        # 2. Aggregation by Relation Lookup
+        anime_mal_id = anime["mal_id"]
         found_seed = None
-        for existing_seed in franchises.keys():
-            if is_same_franchise(title, existing_seed):
-                found_seed = existing_seed
+        for existing_seed_id, f_data in franchises.items():
+            if is_same_franchise(anime_mal_id, f_data["franchise_ids"]):
+                found_seed = existing_seed_id
                 break
         
-        if not found_seed:
-            franchises[title] = {
+        if found_seed is None:
+            franchise_ids = get_franchise_mal_ids(anime_mal_id)
+            title = anime["title"]
+            franchises[anime_mal_id] = {
+                "franchise_ids": franchise_ids,
                 "title": title,
                 "type": anime.get("type"),
                 "genres": [g["name"] for g in anime.get("genres", [])],
@@ -169,18 +189,21 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
     search_results = response.json()
 
     source_genre_ids = set(genre_ids)
-    source_title = selected_anime["title"]
+    source_mal_id = selected_anime["mal_id"]
+    print(f"Fetching relations for source anime: {selected_anime['title']}...")
+    source_franchise_ids = get_franchise_mal_ids(source_mal_id)
     
     allowed_types = ["TV", "Movie"]
     forbidden_genres = ["Ecchi", "Erotica", "Hentai"]
     
-    franchises = {} # representative_title -> { "Clean Name": str, "Versions": [] }
+    franchises = {} # representative_mal_id -> { "Clean Name": str, "Versions": [], "franchise_ids": set }
 
     for anime in search_results["data"]:
         title = anime["title"]
+        anime_mal_id = anime["mal_id"]
         
         # 1. Skip the reference anime, its sequels, and anything already seen in this chain.
-        if anime.get("mal_id") in seen_franchises or is_same_franchise(title, source_title):
+        if anime_mal_id in seen_franchises or is_same_franchise(anime_mal_id, source_franchise_ids):
             continue
             
         # 2. Type, Genre & Rating Filtering.
@@ -205,14 +228,16 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
  
         # 4. Aggregation into "Sub-Folders".
         found_group_key = None
-        for rep_title in franchises.keys():
-            if is_same_franchise(title, rep_title):
-                found_group_key = rep_title
+        for rep_id, f_data in franchises.items():
+            if is_same_franchise(anime_mal_id, f_data["franchise_ids"]):
+                found_group_key = rep_id
                 break
                 
-        if not found_group_key:
-            found_group_key = title
+        if found_group_key is None:
+            found_group_key = anime_mal_id
+            franchise_ids = get_franchise_mal_ids(anime_mal_id)
             franchises[found_group_key] = {
+                "franchise_ids": franchise_ids,
                 "Clean Name": title,
                 "Versions": []
             }
@@ -281,96 +306,107 @@ def main():
     parser.add_argument("title", nargs="?", help="Anime title to search")
     args = parser.parse_args()
 
-    # History and depth tracking for the session
-    history = set()
-    chain_depth = 0
-    current_query = args.title
+    def select_anime(results, current_query, chain_depth):
+        """
+        Handles both auto-selection and manual selection.
+        """
+        if chain_depth > 0 and results[0]["title"].lower() == current_query.lower():
+            return results[0]
 
-    while True:
-        if not current_query:
-            current_query = input("\nEnter the name of the anime (or 'exit' to quit): ")
-            if current_query.lower() == 'exit':
-                break
-            history = set() # Reset history on fresh search
-            chain_depth = 0
-        
-        print(f"\nSearching for matches for '{current_query}'...")
-        results = search_anime(current_query)
-        
-        if not results:
-            print("No results found. Please try a different title.")
-            current_query = None
-            continue
+        print("\n--- Search Results ---")
+        for i, anime in enumerate(results, start=1):
+            print(f"[{i}] {anime['title']}")
 
-        # If we are in a "Continue" chain, we auto-select the first match if it matches perfectly
-        if chain_depth > 0 and results[0]['title'].lower() == current_query.lower():
-            selected_anime = results[0]
-        else:
-            # Display the top 5 matches for user selection.
-            print("\n--- Search Results ---")
-            for i, anime in enumerate(results, start=1):
-                print(f"[{i}] {anime['title']}")
+        try:
+            choice_raw = input("\nPick a number (1-5) or 0 to cancel: ")
+            if not choice_raw.strip():
+                return None
+            choice = int(choice_raw)
+            if choice == 0:
+                print("Operation cancelled.")
+                return None
+            return results[choice - 1]
+        except (ValueError, IndexError):
+            print("Invalid selection.")
+            return None
 
-            # Handle user selection.
-            try:
-                choice_raw = input("\nPick a number (1-5) or 0 to cancel: ")
-                if not choice_raw.strip():
-                    current_query = None
-                    continue
-                choice = int(choice_raw)
-                if choice == 0:
-                    print("Operation cancelled.")
-                    current_query = None
-                    continue
-                selected_anime = results[choice - 1]
-            except (ValueError, IndexError):
-                print("Invalid selection.")
-                current_query = None
-                continue
+    def consolidate(selected_anime, history, chain_depth):
+        """
+        Consolidates metadata fetching, candidate fetching, and KNN processing.
+        """
+        history.add(selected_anime["mal_id"])
 
-        # Add to history
-        history.add(selected_anime['mal_id'])
-        
         print(f"\n--- Reference Anime: {selected_anime['title']} ---")
-        
-        # 1. Generate and print JSON for the reference anime only.
+
         metadata = fetch_anime_details(selected_anime)
         print(json.dumps(metadata, indent=4, ensure_ascii=True))
-        
-        # 2. Extract genres and find top 25 candidates.
-        print(f"\nFinding top 25 candidates with matching genres...")
+
+        print("\nFinding top 25 candidates with matching genres...")
         genre_ids = selected_anime.get("genre_ids", [])
         candidates = get_top_candidates_by_genre(genre_ids, selected_anime, history)
-        
+
         if not candidates:
             print("No new candidates found in this chain! Try a fresh search.")
-            current_query = None
-            continue
+            return None, None
 
-        # 3. Final Output in the terminal.
         print("\n--- Candidate Pool (Aggregated Franchises) ---")
         for i, anime in enumerate(candidates, start=1):
             version_text = f"({anime['Version Count']} versions)"
             score_display = f"(Avg Score: {round(anime['MAL Score'], 2)})"
             print(f"[{i}] {anime['Anime Name']} {version_text} {score_display}")
-                
-        # 4. Generate KNN Vectors and get the top match
-        top_match_name = knn.process_vectors(metadata, candidates, chain_depth)
 
-        # 5. Refresh / Exit / Continue Prompt
-        prompt = "\n[R] Refresh (New Search) | [X] Exit"
-        if top_match_name:
-            prompt += f" | [C] Continue with '{top_match_name}'"
-        
-        action = input(f"{prompt}: ").lower()
-        
-        if action == 'x':
-            break
-        elif action == 'c' and top_match_name:
-            current_query = top_match_name
-            chain_depth += 1
-        else:
-            current_query = None # Clear query to prompt for next title
+        top_match_name = knn.process_vectors(metadata, candidates, chain_depth)
+        return top_match_name, candidates
+
+    def manage_loop():
+        """
+        Manages the session state and overall interactive loop.
+        """
+        history = set()
+        chain_depth = 0
+        current_query = args.title
+
+        while True:
+            if not current_query:
+                current_query = input("\nEnter the name of the anime (or 'exit' to quit): ")
+                if current_query.lower() == "exit":
+                    break
+                history = set()
+                chain_depth = 0
+
+            print(f"\nSearching for matches for '{current_query}'...")
+            results = search_anime(current_query)
+
+            if not results:
+                print("No results found. Please try a different title.")
+                current_query = None
+                continue
+
+            selected_anime = select_anime(results, current_query, chain_depth)
+            if not selected_anime:
+                current_query = None
+                continue
+
+            top_match_name, _ = consolidate(selected_anime, history, chain_depth)
+            if top_match_name is None:
+                current_query = None
+                continue
+
+            prompt = "\n[R] Refresh (New Search) | [X] Exit"
+            if top_match_name:
+                prompt += f" | [C] Continue with '{top_match_name}'"
+
+            action = input(f"{prompt}: ").lower()
+
+            if action == "x":
+                break
+            elif action == "c" and top_match_name:
+                current_query = top_match_name
+                chain_depth += 1
+            else:
+                current_query = None
+
+    manage_loop()
 
 if __name__ == "__main__":
     main()
