@@ -1,13 +1,25 @@
 import os
 
 from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 import logging
 from src import ani_recc
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
+CORS(app)
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, set):
+        return [_json_safe(item) for item in value]
+    return value
 
 @app.route('/')
 def serve_index():
@@ -34,7 +46,7 @@ def get_recommendation():
             history=data.get("history", []),
             chain_depth=data.get("chain_depth", 0)
         )
-        return jsonify(result), 200
+        return jsonify(_json_safe(result)), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
@@ -50,7 +62,7 @@ def search():
     
     try:
         results = ani_recc.search_anime(query)
-        return jsonify(results), 200
+        return jsonify(_json_safe(results)), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

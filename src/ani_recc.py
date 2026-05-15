@@ -32,14 +32,31 @@ def _validate_positive_int(value, name):
         raise ValueError(f"{name} must be a positive integer")
 
 
+def _extract_mal_id(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, dict):
+        for key in ("mal_id", "MAL_ID", "id"):
+            extracted = value.get(key)
+            if isinstance(extracted, int) and not isinstance(extracted, bool) and extracted > 0:
+                return extracted
+    return None
+
+
 def _validate_history(history):
     if history is None:
         return []
     if not isinstance(history, list):
         raise TypeError("history must be a flat list of integers")
-    if any(isinstance(item, bool) or not isinstance(item, int) for item in history):
-        raise ValueError("history must be a flat list of integers")
-    return history
+    normalized = []
+    for item in history:
+        mal_id = _extract_mal_id(item)
+        if mal_id is None:
+            raise ValueError("history must be a flat list of integers")
+        normalized.append(mal_id)
+    return normalized
 
 
 def _validate_chain_depth(chain_depth):
@@ -163,7 +180,9 @@ def get_franchise_mal_ids(mal_id):
     for relation in relations_data:
         for entry in relation.get("entry", []):
             if entry.get("type") == "anime":
-                related_ids.add(entry.get("mal_id"))
+                related_id = _extract_mal_id(entry)
+                if related_id is not None:
+                    related_ids.add(related_id)
     
     return related_ids
 
@@ -273,13 +292,17 @@ def fetch_anime_details(selected_anime):
     
     # Clean the recommendation titles and take ONLY the top 3
     recommendations = [r["entry"]["title"] for r in recs_res["data"][:3]]
+
+    genres = [g["name"] for g in selected_anime.get("genres", []) if g.get("name")]
+    demographics = [d["name"] for d in selected_anime.get("demographics", []) if d.get("name")]
+    themes = [t["name"] for t in selected_anime.get("themes", []) if t.get("name")]
     
     # Extract only the requested metadata to save on API calls and keep the JSON clean.
     data = {
         "Anime Name": selected_anime["title"],
-        "Genres": selected_anime.get("genres", []),
-        "Demographics": selected_anime.get("demographics", []),
-        "Themes": selected_anime.get("themes", []),
+        "Genres": genres,
+        "Demographics": demographics,
+        "Themes": themes,
         "Recommendations": recommendations,
         "Rank": selected_anime.get("rank"),
         "Popularity": selected_anime.get("popularity"),
@@ -322,8 +345,11 @@ def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
 
     metadata = fetch_anime_details(selected_anime)
 
-    history_set = set(history)
-    history_set.add(selected_anime["mal_id"])
+    history_set = set(_validate_history(history))
+    selected_mal_id = _extract_mal_id(selected_anime.get("mal_id")) or _extract_mal_id(selected_anime)
+    if selected_mal_id is None:
+        raise ValueError("selected anime is missing a valid mal_id")
+    history_set.add(selected_mal_id)
 
     genre_ids = selected_anime.get("genre_ids", [])
     candidates = get_top_candidates_by_genre(genre_ids, selected_anime, history_set, limit=limit)
@@ -367,8 +393,10 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
     }
     search_results = _get_jikan_json(base_url, params=params, context=f"Fetching candidate pool for MAL ID {selected_anime['mal_id']}")
 
-    source_genre_ids = set(genre_ids)
-    source_mal_id = selected_anime["mal_id"]
+    source_genre_ids = {genre_id for genre_id in genre_ids if isinstance(genre_id, int) and not isinstance(genre_id, bool)}
+    source_mal_id = _extract_mal_id(selected_anime.get("mal_id")) or _extract_mal_id(selected_anime)
+    if source_mal_id is None:
+        raise ValueError("selected anime is missing a valid mal_id")
     logger.info("Fetching relations for source anime: %s...", selected_anime["title"])
     source_franchise_ids = get_franchise_mal_ids(source_mal_id)
     
@@ -379,7 +407,9 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
 
     for anime in search_results["data"]:
         title = anime["title"]
-        anime_mal_id = anime["mal_id"]
+        anime_mal_id = _extract_mal_id(anime.get("mal_id"))
+        if anime_mal_id is None:
+            continue
         
         # 1. Skip the reference anime, its sequels, and anything already seen in this chain.
         if anime_mal_id in seen_franchises or is_same_franchise(anime_mal_id, source_franchise_ids):
@@ -396,7 +426,11 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
             continue
             
         # 3. Dynamic Genre Matching.
-        anime_genre_ids = {g["mal_id"] for g in anime_genres}
+        anime_genre_ids = {
+            g["mal_id"]
+            for g in anime_genres
+            if isinstance(g.get("mal_id"), int) and not isinstance(g.get("mal_id"), bool)
+        }
         matches = len(source_genre_ids & anime_genre_ids)
         num_source = len(source_genre_ids)
         
@@ -424,9 +458,9 @@ def get_top_candidates_by_genre(genre_ids, selected_anime, seen_franchises, limi
         # Store this specific version's metadata
         franchises[found_group_key]["Versions"].append({
             "Title": title,
-            "Genres": {g["name"] for g in anime_genres},
-            "Demographics": {d["name"] for d in anime.get("demographics", [])},
-            "Themes": {t["name"] for t in anime.get("themes", [])},
+            "Genres": [g["name"] for g in anime_genres],
+            "Demographics": [d["name"] for d in anime.get("demographics", [])],
+            "Themes": [t["name"] for t in anime.get("themes", [])],
             "Score": anime.get("score") or 0,
             "Rank": anime.get("rank") or 999999,
             "Popularity": anime.get("popularity") or 999999,

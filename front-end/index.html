@@ -171,6 +171,10 @@ input[type="text"]::placeholder {
 }
 
 .result-item {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
     padding: 12px 32px;
     cursor: pointer;
     border-bottom: 1px solid rgba(0, 0, 0, 0.03);
@@ -647,28 +651,113 @@ input[type="text"]::placeholder {
     </div>
 
     <script>
-        const API_BASE = '';
+        const API_BASE = (window.location.protocol === 'file:' || window.location.origin === 'null')
+            ? 'http://127.0.0.1:5000'
+            : '';
         const animeInput = document.getElementById('anime-input');
         const searchBtn = document.getElementById('search-btn');
         const resultsList = document.getElementById('results-list');
         const searchSection = document.getElementById('search-section');
         const loadingOverlay = document.getElementById('loading-overlay');
         const recommendationContainer = document.getElementById('recommendation-container');
-        const shufflerTrack = document.getElementById('shuffler-track');
+        const shuffleSection = document.getElementById('shuffle-section');
+        const posterShuffler = document.getElementById('poster-shuffler');
+        const titleTrack = document.getElementById('title-track');
+        const noMatchesOverlay = document.getElementById('no-matches-overlay');
 
         // State
         let chainHistory = [];
         let chainDepth = 0;
-        let shuffleInterval;
+        let lastSearchResults = [];
+        let selectedAnime = null;
 
         // --- Search Logic ---
+        function normalizeSearchResult(anime) {
+            return {
+                title: anime?.title || anime?.['Anime Name'] || 'Unknown title',
+                malId: anime?.mal_id ?? anime?.MAL_ID ?? null,
+                imageUrl: anime?.images?.webp?.large_image_url
+                    || anime?.images?.jpg?.large_image_url
+                    || anime?.['Image URL']
+                    || '',
+                type: anime?.type || 'TV',
+                score: typeof anime?.score === 'number' ? anime.score : null,
+                members: anime?.members ?? null,
+            };
+        }
+
+        function normalizeRecommendationItem(anime) {
+            return {
+                title: anime?.['Anime Name'] || anime?.title || 'Unknown title',
+                malId: anime?.MAL_ID ?? anime?.mal_id ?? null,
+                imageUrl: anime?.['Image URL']
+                    || anime?.images?.webp?.large_image_url
+                    || anime?.images?.jpg?.large_image_url
+                    || '',
+                genres: Array.isArray(anime?.Genres) ? anime.Genres : [],
+            };
+        }
+
+        function clearResults() {
+            resultsList.innerHTML = '';
+            resultsList.classList.remove('active');
+            searchSection.classList.remove('dropdown-active');
+        }
+
+        function renderSearchResults(results) {
+            resultsList.innerHTML = '';
+
+            if (!results.length) {
+                const empty = document.createElement('div');
+                empty.className = 'result-item';
+                empty.style.cursor = 'default';
+                empty.textContent = 'No results found';
+                resultsList.appendChild(empty);
+                resultsList.classList.add('active');
+                searchSection.classList.add('dropdown-active');
+                return;
+            }
+
+            results.forEach((rawAnime) => {
+                const anime = normalizeSearchResult(rawAnime);
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'result-item';
+                item.dataset.malId = anime.malId ?? '';
+                item.dataset.title = anime.title;
+                item.innerHTML = `
+                    <img src="${anime.imageUrl}" alt="">
+                    <div class="result-info">
+                        <span class="result-name">${anime.title}</span>
+                        <span class="result-meta">${anime.type} • ${anime.score !== null ? anime.score.toFixed(1) : 'N/A'} Score${anime.members ? ` • ${anime.members.toLocaleString()} Members` : ''}</span>
+                    </div>
+                `;
+                resultsList.appendChild(item);
+            });
+
+            resultsList.classList.add('active');
+            searchSection.classList.add('dropdown-active');
+        }
+
+        function renderSearchError(message) {
+            resultsList.innerHTML = '';
+            const errorItem = document.createElement('div');
+            errorItem.className = 'result-item';
+            errorItem.style.cursor = 'default';
+            errorItem.textContent = message || 'Search failed';
+            resultsList.appendChild(errorItem);
+            resultsList.classList.add('active');
+            searchSection.classList.add('dropdown-active');
+        }
+
         let searchTimeout;
         animeInput.addEventListener('input', () => {
             clearTimeout(searchTimeout);
             const query = animeInput.value.trim();
+            selectedAnime = null;
             if (query.length < 2) {
-                resultsList.classList.remove('active');
-                searchSection.classList.remove('dropdown-active');
+                lastSearchResults = [];
+                clearResults();
                 return;
             }
             searchTimeout = setTimeout(() => performSearch(query), 300);
@@ -682,6 +771,23 @@ input[type="text"]::placeholder {
                     }
                 });
                 const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data?.error || `Search request failed with HTTP ${res.status}`);
+                }
+
+                if (Array.isArray(data)) {
+                    lastSearchResults = data;
+                    renderSearchResults(lastSearchResults);
+                    return;
+                }
+
+                if (data?.error) {
+                    throw new Error(data.error);
+                }
+
+                lastSearchResults = [];
+                renderSearchResults([]);
+                return;
                 
                 if (data.error || !data.length) {
                     resultsList.innerHTML = '<div class="result-item">No results found</div>';
@@ -700,31 +806,67 @@ input[type="text"]::placeholder {
                 searchSection.classList.add('dropdown-active');
             } catch (err) {
                 console.error('Search failed', err);
+                lastSearchResults = [];
+                renderSearchError(err.message || 'Search unavailable');
             }
         }
 
         // Close dropdown on click outside
         document.addEventListener('click', (e) => {
             if (!searchSection.contains(e.target)) {
-                resultsList.classList.remove('active');
-                searchSection.classList.remove('dropdown-active');
+                clearResults();
+            }
+        });
+
+        resultsList.addEventListener('click', (event) => {
+            const item = event.target.closest('.result-item');
+            if (!item || !item.dataset.malId) return;
+
+            const anime = lastSearchResults.find((entry) => String(entry.mal_id ?? entry.MAL_ID ?? '') === item.dataset.malId);
+            if (anime) {
+                selectAnime(anime.title || item.dataset.title);
             }
         });
 
         // --- Recommendation Logic ---
         function selectAnime(title) {
+            const anime = lastSearchResults.find((entry) => entry.title === title) || { title, mal_id: null };
+            selectedAnime = anime;
             resultsList.classList.remove('active');
             searchSection.classList.remove('dropdown-active');
             animeInput.value = title;
-            startRecommendation(title);
+            startRecommendation(anime);
         }
 
         searchBtn.addEventListener('click', () => {
             const title = animeInput.value.trim();
-            if (title) startRecommendation(title);
+            if (!title) return;
+
+            const exactMatch = lastSearchResults.find((anime) => anime.title?.toLowerCase() === title.toLowerCase());
+            if (exactMatch) {
+                selectAnime(exactMatch.title);
+                return;
+            }
+
+            if (selectedAnime && selectedAnime.title?.toLowerCase() === title.toLowerCase()) {
+                startRecommendation(selectedAnime);
+                return;
+            }
+
+            if (lastSearchResults.length === 1) {
+                selectAnime(lastSearchResults[0].title);
+                return;
+            }
+
+            performSearch(title);
         });
 
-        async function startRecommendation(title) {
+        async function startRecommendation(anime) {
+            if (!anime?.mal_id && !anime?.malId) {
+                alert('This selection is missing a MAL ID, so the backend cannot continue.');
+                return;
+            }
+
             // UI Reset
             searchSection.style.display = 'none';
             recommendationContainer.classList.remove('active');
@@ -739,7 +881,7 @@ input[type="text"]::placeholder {
                         'ngrok-skip-browser-warning': '69420'
                     },
                     body: JSON.stringify({
-                        title: title,
+                        mal_id: anime.mal_id || anime.malId,
                         history: chainHistory,
                         chain_depth: chainDepth
                     })
@@ -760,32 +902,31 @@ input[type="text"]::placeholder {
         }
 
         async function performPosterShuffle(data) {
-            const shuffleSection = document.getElementById('shuffle-section');
-            const posterShuffler = document.getElementById('poster-shuffler');
-            const titleTrack = document.getElementById('title-track');
-            
             shuffleSection.classList.add('active');
             posterShuffler.innerHTML = '';
             titleTrack.innerHTML = '';
+            titleTrack.style.transform = 'translateY(0)';
 
-            const candidates = data.all_candidates;
-            const winner = data.top_match.data;
+            const candidates = Array.isArray(data.all_candidates) ? data.all_candidates : [];
+            const winner = normalizeRecommendationItem(data.top_match?.data);
 
             // Prepare posters and titles for shuffling
             const pool = candidates.slice(0, 10);
-            if (!pool.find(c => c['Anime Name'] === winner['Anime Name'])) {
-                pool.push(winner);
+            if (winner.title && !pool.find((candidate) => normalizeRecommendationItem(candidate).title === winner.title)) {
+                pool.push(data.top_match.data);
             }
 
             pool.forEach((anime, i) => {
+                const normalized = normalizeRecommendationItem(anime);
                 const img = document.createElement('img');
-                img.src = anime['Image URL'] || anime.images?.jpg?.large_image_url || '';
+                img.src = normalized.imageUrl || '';
+                img.alt = normalized.title;
                 img.className = 'shuffle-poster';
                 img.id = `poster-${i}`;
                 posterShuffler.appendChild(img);
 
                 const titleSpan = document.createElement('span');
-                titleSpan.innerText = anime['Anime Name'] || anime.title;
+                titleSpan.innerText = normalized.title;
                 titleTrack.appendChild(titleSpan);
             });
 
@@ -816,23 +957,25 @@ input[type="text"]::placeholder {
         }
 
         function displayRecommendation(data) {
-            const recc = data.top_match.data;
-            if (!recc) {
-                document.getElementById('no-matches-overlay').classList.add('active');
+            const recc = normalizeRecommendationItem(data.top_match?.data);
+            if (!recc.title) {
+                displayNoMatches(data.message);
                 return;
             }
 
             // Update state (Machine-side Reference Map)
-            const refId = data.reference['MAL_ID'];
-            const reccId = recc['MAL_ID'];
-            const reccName = recc['Anime Name'];
+            const refId = data.reference?.MAL_ID;
+            const reccId = recc.malId;
+            const reccName = recc.title;
             
             // Log both reference and recommendation to ensure no repeats from either side
             if (refId && !chainHistory.includes(refId)) chainHistory.push(refId);
             if (reccId && !chainHistory.includes(reccId)) chainHistory.push(reccId);
 
             // Update UI
-            document.getElementById('recc-img').src = recc['Image URL'] || '';
+            const reccImg = document.getElementById('recc-img');
+            reccImg.src = recc.imageUrl || '';
+            reccImg.alt = reccName;
             
             const titleElem = document.getElementById('recc-title');
             titleElem.textContent = reccName;
@@ -843,9 +986,9 @@ input[type="text"]::placeholder {
             else if (reccName.length > 20) titleElem.style.fontSize = '1.9rem';
             else titleElem.style.fontSize = '2.2rem';
 
-            document.getElementById('recc-link').href = `https://myanimelist.net/anime/${recc.MAL_ID || ''}`;
+            document.getElementById('recc-link').href = `https://myanimelist.net/anime/${recc.malId || ''}`;
             
-            document.getElementById('recc-genres').innerHTML = (recc.Genres || [])
+            document.getElementById('recc-genres').innerHTML = (recc.genres || [])
                 .map(g => `<span class="genre-tag">${g}</span>`).join('');
 
             recommendationContainer.classList.add('active');
@@ -853,19 +996,28 @@ input[type="text"]::placeholder {
             // Setup Continue Button
             document.getElementById('continue-btn').onclick = () => {
                 chainDepth++;
-                startRecommendation(reccName);
+                startRecommendation(recc);
             };
+        }
+
+        function displayNoMatches(message) {
+            noMatchesOverlay.querySelector('p').textContent = message || "We've explored all relevant branches. No new unique franchises found.";
+            noMatchesOverlay.classList.add('active');
         }
 
         function resetUI() {
             chainHistory = [];
             chainDepth = 0;
+            lastSearchResults = [];
+            selectedAnime = null;
             animeInput.value = '';
             searchSection.style.display = 'block';
-            document.getElementById('shuffle-section').classList.remove('active');
+            shuffleSection.classList.remove('active');
             recommendationContainer.classList.remove('active');
             loadingOverlay.classList.remove('active');
-            document.getElementById('no-matches-overlay').classList.remove('active');
+            noMatchesOverlay.classList.remove('active');
+            clearResults();
+            titleTrack.style.transform = 'translateY(0)';
         }
 
         document.getElementById('reset-btn').addEventListener('click', resetUI);
