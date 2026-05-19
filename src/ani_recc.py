@@ -293,9 +293,21 @@ def fetch_anime_details(selected_anime):
     # Clean the recommendation titles and take ONLY the top 3
     recommendations = [r["entry"]["title"] for r in recs_res["data"][:3]]
 
-    genres = [g["name"] for g in selected_anime.get("genres", []) if g.get("name")]
-    demographics = [d["name"] for d in selected_anime.get("demographics", []) if d.get("name")]
-    themes = [t["name"] for t in selected_anime.get("themes", []) if t.get("name")]
+    def _normalize_feature_list(values):
+        normalized = []
+        for value in values or []:
+            if isinstance(value, str):
+                if value:
+                    normalized.append(value)
+            elif isinstance(value, dict):
+                name = value.get("name")
+                if name:
+                    normalized.append(name)
+        return normalized
+
+    genres = _normalize_feature_list(selected_anime.get("genres", []))
+    demographics = _normalize_feature_list(selected_anime.get("demographics", []))
+    themes = _normalize_feature_list(selected_anime.get("themes", []))
     
     # Extract only the requested metadata to save on API calls and keep the JSON clean.
     data = {
@@ -333,6 +345,8 @@ def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
     _validate_positive_int(mal_id, "mal_id")
     history = _validate_history(history)
     _validate_chain_depth(chain_depth)
+    if chain_depth == 0:
+        knn.reset_bandit_session()
 
     selected_anime = fetch_anime_by_mal_id(mal_id)
     if not selected_anime:
@@ -362,16 +376,23 @@ def get_recommendation_by_mal_id(mal_id, history=None, chain_depth=0, limit=25):
             "message": "No suitable candidates found for recommendation."
         }
 
-    top_match_name = knn.process_vectors(metadata, candidates, chain_depth=chain_depth)
-    top_match_data = next((c for c in candidates if c["Anime Name"] == top_match_name), None)
+    scored_candidates = knn.process_vectors(metadata, candidates, chain_depth=chain_depth)
+    selected_candidate = knn.select_candidate_with_bandit(scored_candidates)
+    if selected_candidate is None:
+        return {
+            "reference": metadata,
+            "top_match": None,
+            "all_candidates": scored_candidates[:10],
+            "message": "No suitable candidates found for recommendation."
+        }
 
     return {
         "reference": metadata,
         "top_match": {
-            "name": top_match_name,
-            "data": top_match_data
+            "name": selected_candidate["Anime Name"],
+            "data": selected_candidate
         },
-        "all_candidates": candidates[:10]
+        "all_candidates": scored_candidates[:10]
     }
 
 
@@ -519,6 +540,19 @@ def main():
     parser.add_argument("title", nargs="?", help="Anime title to search")
     args = parser.parse_args()
 
+    def prompt_recommendation_feedback(selected_candidate):
+        """
+        Captures thumbs up/down feedback for the surfaced recommendation.
+        """
+        if not selected_candidate:
+            return
+
+        response = input("\nRate this recommendation [U] Thumbs Up | [D] Thumbs Down | [S] Skip: ").strip().lower()
+        if response == "u":
+            knn.record_feedback(selected_candidate, thumbs_up=True)
+        elif response == "d":
+            knn.record_feedback(selected_candidate, thumbs_up=False)
+
     def select_anime(results, current_query, chain_depth):
         """
         Handles both auto-selection and manual selection.
@@ -553,6 +587,8 @@ def main():
         Consolidates metadata fetching, candidate fetching, and KNN processing.
         """
         history.add(selected_anime["mal_id"])
+        if chain_depth == 0:
+            knn.reset_bandit_session()
 
         logger.info("--- Reference Anime: %s ---", selected_anime["title"])
 
@@ -573,8 +609,11 @@ def main():
             score_display = f"(Avg Score: {round(anime['MAL Score'], 2)})"
             logger.info("[%s] %s %s %s", i, anime["Anime Name"], version_text, score_display)
 
-        top_match_name = knn.process_vectors(metadata, candidates, chain_depth)
-        return top_match_name, candidates
+        scored_candidates = knn.process_vectors(metadata, candidates, chain_depth)
+        selected_candidate = knn.select_candidate_with_bandit(scored_candidates)
+        if selected_candidate is None:
+            return None, scored_candidates
+        return selected_candidate, scored_candidates
 
     def manage_loop():
         """
@@ -593,6 +632,7 @@ def main():
                 history = set()
                 chain_depth = 0
                 results = None
+                knn.reset_bandit_session()
 
             if results is None:
                 clear_jikan_cache()
@@ -611,11 +651,14 @@ def main():
                 results = None
                 continue
 
-            top_match_name, _ = consolidate(selected_anime, history, chain_depth)
-            if top_match_name is None:
+            selected_candidate, _ = consolidate(selected_anime, history, chain_depth)
+            if selected_candidate is None:
                 current_query = None
                 results = None
                 continue
+
+            top_match_name = selected_candidate["Anime Name"]
+            prompt_recommendation_feedback(selected_candidate)
 
             prompt = "\n[R] Refresh (New Search) | [X] Exit"
             if top_match_name:
