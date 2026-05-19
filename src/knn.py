@@ -15,6 +15,8 @@ _BANDIT_STATE = {
     "total_tries": 0,
 }
 
+_UNSEEN_UCB_SCORE = 9999.0
+
 def calculate_cosine_similarity(vec1, vec2):
     """
     Calculates the cosine similarity between two vectors.
@@ -84,7 +86,7 @@ def score_candidate_pool(ref_vector, candidate_pool_data, *, exploration_constan
         q_value = bandit_record["q"]
 
         if visits == 0:
-            ucb_score = float("inf")
+            ucb_score = _UNSEEN_UCB_SCORE
         else:
             ucb_score = q_value + exploration_constant * math.sqrt(math.log(total_tries) / visits)
 
@@ -117,7 +119,7 @@ def select_candidate_with_bandit(scored_candidates):
     logger.info(
         "Bandit selected %s with UCB=%s and cosine=%s",
         selected_candidate.get("Anime Name"),
-        "inf" if math.isinf(selected_candidate["ucb_score"]) else round(selected_candidate["ucb_score"], 4),
+        round(selected_candidate["ucb_score"], 4),
         round(selected_candidate["cosine_similarity"], 4),
     )
     return selected_candidate
