@@ -21,15 +21,18 @@ def _json_safe(value):
         return [_json_safe(item) for item in value]
     return value
 
-@app.route('/')
+
+@app.route("/")
 def serve_index():
-    return send_from_directory('front-end', 'index.html')
+    return send_from_directory("front-end", "index.html")
 
-@app.route('/<path:path>')
+
+@app.route("/<path:path>")
 def serve_static(path):
-    return send_from_directory('front-end', path)
+    return send_from_directory("front-end", path)
 
-@app.route('/recommend', methods=['POST'])
+
+@app.route("/recommend", methods=["POST"])
 def get_recommendation():
     """
     Endpoint to get anime recommendations based on a MAL ID.
@@ -44,35 +47,38 @@ def get_recommendation():
         result = ani_recc.get_recommendation_by_mal_id(
             data["mal_id"],
             history=data.get("history", []),
-            chain_depth=data.get("chain_depth", 0)
+            chain_depth=data.get("chain_depth", 0),
         )
         return jsonify(_json_safe(result)), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-@app.route('/search', methods=['GET'])
+
+@app.route("/search", methods=["GET"])
 def search():
     """
     Endpoint to search for anime titles.
     Query param: ?q=title
     """
-    query = request.args.get('q', '')
+    query = request.args.get("q", "")
     if not query:
         return jsonify({"error": "Missing query parameter 'q'"}), 400
-    
+
     try:
         results = ani_recc.search_anime(query)
         return jsonify(_json_safe(results)), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/health', methods=['GET'])
+
+@app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy"}), 200
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Run on port 5000 by default
     logging.basicConfig(level=logging.INFO)
     logger.info("Starting Anime Recommendation API...")
     debug = os.getenv("FLASK_DEBUG", "").lower() in {"1", "true", "yes", "on"}
-    app.run(debug=debug, host='127.0.0.1', port=5000)
+    app.run(debug=debug, host="127.0.0.1", port=5000)
